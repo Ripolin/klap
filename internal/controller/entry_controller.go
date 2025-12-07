@@ -1,0 +1,319 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"maps"
+	"slices"
+	"time"
+
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	corev1 "k8s.io/api/core/v1"
+
+	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/go-ldap/ldap/v3"
+)
+
+const (
+	BaseDN              = "base_dn"
+	BindDN              = "bind_dn"
+	Password            = "password"
+	Url                 = "url"
+	typeAvailable       = "Available"
+	requeueAfterSuccess = 5 * time.Minute
+	requeueAfterError   = time.Minute
+)
+
+var finalizer = fmt.Sprintf("%s/finalizer", klapv1alpha1.GroupVersion.Group)
+
+// EntryReconciler reconciles a Entry object
+type EntryReconciler struct {
+	client.Client
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
+}
+
+// +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+// TODO(user): Modify the Reconcile function to compare the state specified by
+// the Entry object against the actual cluster state, and then
+// perform operations to make the cluster state reflect the state specified by
+// the user.
+//
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	var (
+		cli   ldap.Client
+		entry klapv1alpha1.Entry
+		log   = logf.FromContext(ctx)
+	)
+
+	if err := r.Get(ctx, req.NamespacedName, &entry); err != nil {
+		if apierrs.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	if entry.Spec.Prune && !controllerutil.ContainsFinalizer(&entry, finalizer) {
+		controllerutil.AddFinalizer(&entry, finalizer)
+		if err := r.Update(ctx, &entry); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+	}
+
+	if !entry.Spec.Prune && controllerutil.ContainsFinalizer(&entry, finalizer) {
+		controllerutil.RemoveFinalizer(&entry, finalizer)
+		if err := r.Update(ctx, &entry); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+	}
+
+	serverConfig, err := r.getServerConfig(ctx, &entry)
+
+	if err != nil {
+		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+	}
+
+	cli, err = ldap.DialURL(string(serverConfig.Data[Url]))
+
+	if err != nil {
+		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+	}
+
+	err = cli.Bind(string(serverConfig.Data[BindDN]), string(serverConfig.Data[Password]))
+
+	if err != nil {
+		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+	}
+
+	defer func() {
+		err = cli.Unbind()
+
+		if err != nil {
+			log.Error(err, err.Error())
+		}
+	}()
+
+	if entry.DeletionTimestamp != nil {
+
+		if entry.Spec.Prune {
+			err := r.deleteEntry(cli, &entry)
+			if err != nil {
+				if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+			}
+		}
+
+		if controllerutil.RemoveFinalizer(&entry, finalizer) {
+			if err := r.Update(ctx, &entry); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+
+		log.V(1).Info("Entry deleted", "dn", entry.Spec.DN)
+
+		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+
+	}
+
+	search := &ldap.SearchRequest{
+		BaseDN:     string(serverConfig.Data[BaseDN]),
+		Scope:      ldap.ScopeWholeSubtree,
+		Filter:     fmt.Sprintf("(entryDN=%s)", *entry.Spec.DN),
+		Attributes: []string{"*", "+"},
+	}
+
+	searchResult, err := cli.Search(search)
+
+	if err != nil {
+		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+	}
+
+	if len(searchResult.Entries) > 0 {
+
+		err := r.updateEntry(cli, searchResult.Entries[0], &entry)
+
+		if err != nil {
+			err = r.setStatusUnavailable(ctx, &entry, err)
+			return ctrl.Result{}, err
+		}
+
+		if err = r.setStatusAvailable(ctx, &entry); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+	}
+
+	err = r.addEntry(cli, &entry)
+
+	if err != nil {
+		err = r.setStatusUnavailable(ctx, &entry, err)
+		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+	}
+
+	if err = r.setStatusAvailable(ctx, &entry); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+}
+
+func (r *EntryReconciler) getServerConfig(ctx context.Context, entry *klapv1alpha1.Entry) (*corev1.Secret, error) {
+	var (
+		secret = &corev1.Secret{}
+		ref    = &types.NamespacedName{
+			Name:      *entry.Spec.ServerSecretRef.Name,
+			Namespace: *entry.Spec.ServerSecretRef.Namespace,
+		}
+	)
+	err := r.Get(ctx, *ref, secret)
+	if err != nil {
+		return nil, err
+	}
+	return secret, nil
+}
+
+func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry) error {
+	var (
+		attributes = map[string][]string{}
+		request    = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
+	)
+
+	maps.Copy(attributes, entry.Spec.Attributes)
+	maps.Copy(attributes, entry.Spec.InitAttributes)
+
+	for k, v := range attributes {
+		request.Attributes = append(request.Attributes, ldap.Attribute{
+			Type: k,
+			Vals: v,
+		})
+	}
+
+	return cli.Add(request)
+}
+
+func (r *EntryReconciler) updateEntry(cli ldap.Client, current *ldap.Entry, entry *klapv1alpha1.Entry) error {
+	var (
+		request = ldap.NewModifyRequest(*entry.Spec.DN, []ldap.Control{})
+	)
+
+	for k, v := range entry.Spec.Attributes {
+		if len(current.GetAttributeValues(k)) == 0 {
+			request.Add(k, v)
+			continue
+		}
+		if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
+			request.Replace(k, v)
+		}
+	}
+
+	if len(request.Changes) > 0 {
+		return cli.Modify(request)
+	}
+	return nil
+}
+
+func (r *EntryReconciler) deleteEntry(cli ldap.Client, entry *klapv1alpha1.Entry) error {
+	var (
+		request = ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{})
+	)
+
+	return cli.Del(request)
+}
+
+func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) error {
+
+	r.Recorder.Eventf(entry, "Normal", "Reconciled", "Entry %s reconciled", *entry.Spec.DN)
+
+	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
+		Type:               typeAvailable,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Synchronized",
+		Message:            "Entry is synchronized with the remote server",
+		ObservedGeneration: entry.Generation,
+	}) {
+		if err := r.Status().Update(ctx, entry); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) error {
+
+	r.Recorder.Event(entry, "Warning", "Error", err.Error())
+
+	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
+		Type:               typeAvailable,
+		Status:             metav1.ConditionFalse,
+		Reason:             "Unsynchronized",
+		Message:            "Entry is not synchronized with the remote server",
+		ObservedGeneration: entry.Generation,
+	}) {
+		if err := r.Status().Update(ctx, entry); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *EntryReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&klapv1alpha1.Entry{}).
+		Named("entry").
+		Complete(r)
+}

@@ -3,9 +3,19 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.10.1
-domain: my.domain
+domain: ripolin.github.com
 layout:
 - go.kubebuilder.io/v4
 projectName: klap
 repo: github.com/ripolin/klap
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: ripolin.github.com
+  group: klap
+  kind: Entry
+  path: github.com/ripolin/klap/api/v1alpha1
+  version: v1alpha1
 version: "3"
