@@ -12,6 +12,14 @@ rules:
   - create
   - patch
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - klap.ripolin.github.com
   resources:
   - entries

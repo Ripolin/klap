@@ -51,7 +51,7 @@ const (
 	requeueAfterError   = time.Minute
 )
 
-var finalizer = fmt.Sprintf("%s/finalizer", klapv1alpha1.GroupVersion.Group)
+var Finalizer = fmt.Sprintf("%s/finalizer", klapv1alpha1.GroupVersion.Group)
 
 // EntryReconciler reconciles a Entry object
 type EntryReconciler struct {
@@ -64,13 +64,10 @@ type EntryReconciler struct {
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Entry object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
@@ -88,20 +85,11 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	if entry.Spec.Prune && !controllerutil.ContainsFinalizer(&entry, finalizer) {
-		controllerutil.AddFinalizer(&entry, finalizer)
+	if entry.DeletionTimestamp != nil && !entry.Spec.Prune && controllerutil.RemoveFinalizer(&entry, Finalizer) {
 		if err := r.Update(ctx, &entry); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
-	}
-
-	if !entry.Spec.Prune && controllerutil.ContainsFinalizer(&entry, finalizer) {
-		controllerutil.RemoveFinalizer(&entry, finalizer)
-		if err := r.Update(ctx, &entry); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+		return ctrl.Result{}, nil
 	}
 
 	serverConfig, err := r.getServerConfig(ctx, &entry)
@@ -141,17 +129,15 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	if entry.DeletionTimestamp != nil {
 
-		if entry.Spec.Prune {
-			err := r.deleteEntry(cli, &entry)
-			if err != nil {
-				if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-					return ctrl.Result{}, err
-				}
-				return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+		err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{}))
+		if err != nil {
+			if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+				return ctrl.Result{}, err
 			}
+			return ctrl.Result{RequeueAfter: requeueAfterError}, nil
 		}
 
-		if controllerutil.RemoveFinalizer(&entry, finalizer) {
+		if controllerutil.RemoveFinalizer(&entry, Finalizer) {
 			if err := r.Update(ctx, &entry); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -188,8 +174,10 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			return ctrl.Result{}, err
 		}
 
-		if err = r.setStatusAvailable(ctx, &entry); err != nil {
-			return ctrl.Result{}, err
+		if meta.IsStatusConditionFalse(entry.Status.Conditions, typeAvailable) {
+			if err = r.setStatusAvailable(ctx, &entry); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 
 		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
@@ -262,14 +250,6 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, current *ldap.Entry, entr
 		return cli.Modify(request)
 	}
 	return nil
-}
-
-func (r *EntryReconciler) deleteEntry(cli ldap.Client, entry *klapv1alpha1.Entry) error {
-	var (
-		request = ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{})
-	)
-
-	return cli.Del(request)
 }
 
 func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) error {
