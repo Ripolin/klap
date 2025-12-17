@@ -3,6 +3,26 @@ kind: Namespace
 metadata:
   name: openldap
 ---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: openldap-selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openldap
+spec:
+  dnsNames:
+    - ldap.openldap.svc
+    - ldap.openldap.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: openldap-selfsigned-issuer
+  secretName: openldap-server-cert
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -38,6 +58,15 @@ spec:
       containers:
         - name: openldap
           image: bitnamilegacy/openldap:2.6.10-debian-12-r4
+          env:
+            - name: LDAP_ENABLE_TLS
+              value: "yes"
+            - name: LDAP_TLS_CERT_FILE
+              value: /var/run/tls/tls.crt
+            - name: LDAP_TLS_KEY_FILE
+              value: /var/run/tls/tls.key
+            - name: LDAP_TLS_CA_FILE
+              value: /var/run/tls/ca.crt
           ports:
             - containerPort: 1389
               name: ldap
@@ -46,6 +75,13 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /bitnami/openldap
+            - name: server-cert
+              mountPath: /var/run/tls
+              readOnly: true
+      volumes:
+        - name: server-cert
+          secret:
+            secretName: openldap-server-cert
   volumeClaimTemplates:
     - metadata:
         name: data

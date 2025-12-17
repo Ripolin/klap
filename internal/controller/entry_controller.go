@@ -18,9 +18,14 @@ package controller
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"maps"
+	"net/url"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -73,10 +78,18 @@ type EntryReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var (
-		cli   ldap.Client
-		entry klapv1alpha1.Entry
-		log   = logf.FromContext(ctx)
+		cli    ldap.Client
+		entry  klapv1alpha1.Entry
+		tlsCfg = &tls.Config{}
+		log    = logf.FromContext(ctx)
 	)
+
+	if cacert, err := x509.SystemCertPool(); err != nil {
+		log.Error(err, "Unable to load system cacerts")
+		tlsCfg.RootCAs = x509.NewCertPool()
+	} else {
+		tlsCfg.RootCAs = cacert
+	}
 
 	if err := r.Get(ctx, req.NamespacedName, &entry); err != nil {
 		if apierrs.IsNotFound(err) {
@@ -101,13 +114,48 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
 	}
 
-	cli, err = ldap.DialURL(string(serverConfig.Data[Url]))
+	if entry.Spec.TlsSecretRef.Name != nil {
+		tlsConfig, err := r.getTlsConfig(ctx, &entry)
+		if err != nil {
+			if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+		}
+		if _, ok := tlsConfig.Data["ca.crt"]; ok {
+			tlsCfg.RootCAs.AppendCertsFromPEM(tlsConfig.Data["ca.crt"])
+		}
+	}
+
+	serverUrl, err := url.Parse(string(serverConfig.Data[Url]))
 
 	if err != nil {
 		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+	}
+
+	tlsCfg.ServerName = serverUrl.Hostname()
+
+	cli, err = ldap.DialURL(serverUrl.String(), ldap.DialWithTLSConfig(tlsCfg))
+
+	if err != nil {
+		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+	}
+
+	if raw, ok := serverConfig.Data["start_tls"]; ok && strings.Compare("ldap", serverUrl.Scheme) == 0 {
+		if startTls, _ := strconv.ParseBool(string(raw)); startTls {
+			if err = cli.StartTLS(tlsCfg); err != nil {
+				if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+			}
+		}
 	}
 
 	err = cli.Bind(string(serverConfig.Data[BindDN]), string(serverConfig.Data[Password]))
@@ -212,6 +260,21 @@ func (r *EntryReconciler) getServerConfig(ctx context.Context, entry *klapv1alph
 	return secret, nil
 }
 
+func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.Entry) (*corev1.Secret, error) {
+	var (
+		secret = &corev1.Secret{}
+		ref    = &types.NamespacedName{
+			Name:      *entry.Spec.TlsSecretRef.Name,
+			Namespace: *entry.Spec.TlsSecretRef.Namespace,
+		}
+	)
+	err := r.Get(ctx, *ref, secret)
+	if err != nil {
+		return nil, err
+	}
+	return secret, nil
+}
+
 func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry) error {
 	var (
 		attributes = map[string][]string{}
@@ -254,7 +317,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, current *ldap.Entry, entr
 
 func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) error {
 
-	r.Recorder.Eventf(entry, "Normal", "Reconciled", "Entry %s reconciled", *entry.Spec.DN)
+	r.Recorder.Eventf(entry, "Normal", "Success", "Entry %s reconciled", *entry.Spec.DN)
 
 	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
 		Type:               typeAvailable,

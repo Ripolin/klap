@@ -17,6 +17,7 @@ mv kubectl /usr/local/bin/kubectl
 # docker network create -d=bridge --subnet=172.19.0.0/24 kind
 
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
+kubectl apply -k openldap
 
 # kind version
 kubebuilder version
