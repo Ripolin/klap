@@ -176,22 +176,15 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	}
 
-	search := &ldap.SearchRequest{
-		BaseDN:     string(serverConfig.Data[BaseDN]),
-		Scope:      ldap.ScopeWholeSubtree,
-		Filter:     fmt.Sprintf("(entryDN=%s)", *entry.Spec.DN),
-		Attributes: []string{"*", "+"},
-	}
-
-	searchResult, err := cli.Search(search)
+	baseDN := string(serverConfig.Data[BaseDN])
 
 	if err != nil {
 		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
-	if len(searchResult.Entries) > 0 {
+	if entry.Status.EntryUUID != nil {
 
-		err := r.updateEntry(cli, searchResult.Entries[0], &entry)
+		err := r.updateEntry(cli, &entry, &baseDN)
 
 		if err != nil {
 			return r.setStatusUnavailable(ctx, &entry, err)
@@ -205,7 +198,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	}
 
-	err = r.addEntry(cli, &entry)
+	err = r.addEntry(cli, &entry, &baseDN)
 
 	if err != nil {
 		return r.setStatusUnavailable(ctx, &entry, err)
@@ -244,10 +237,16 @@ func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.
 	return secret, nil
 }
 
-func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry) error {
+func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN *string) error {
 	var (
 		attributes = map[string][]string{}
 		request    = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
+		search     = &ldap.SearchRequest{
+			BaseDN:     *baseDN,
+			Scope:      ldap.ScopeWholeSubtree,
+			Filter:     fmt.Sprintf("(entryDN=%s)", *entry.Spec.DN),
+			Attributes: []string{"entryUUID"},
+		}
 	)
 
 	maps.Copy(attributes, entry.Spec.Attributes)
@@ -260,33 +259,85 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry) e
 		})
 	}
 
-	return cli.Add(request)
+	if err := cli.Add(request); err != nil {
+		if !ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) {
+			return err
+		}
+	}
+
+	if searchResult, err := cli.Search(search); err != nil {
+		return err
+	} else {
+		entryUUID := searchResult.Entries[0].GetAttributeValue("entryUUID")
+		entry.Status.EntryUUID = &entryUUID
+	}
+
+	return nil
 }
 
-func (r *EntryReconciler) updateEntry(cli ldap.Client, current *ldap.Entry, entry *klapv1alpha1.Entry) error {
+func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN *string) error {
 	var (
 		request = ldap.NewModifyRequest(*entry.Spec.DN, []ldap.Control{})
+		search  = &ldap.SearchRequest{
+			BaseDN:     *baseDN,
+			Scope:      ldap.ScopeWholeSubtree,
+			Filter:     fmt.Sprintf("(entryUUID=%s)", *entry.Status.EntryUUID),
+			Attributes: []string{"*", "entryDN"},
+		}
 	)
 
-	for k, v := range entry.Spec.Attributes {
-		if len(current.GetAttributeValues(k)) == 0 {
-			request.Add(k, v)
-			continue
+	if searchResult, err := cli.Search(search); err != nil {
+		return err
+	} else {
+
+		if len(searchResult.Entries) == 0 {
+			entryUUID := *entry.Status.EntryUUID
+			entry.Status.EntryUUID = nil
+			return fmt.Errorf("entry %s not found", entryUUID)
 		}
-		if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
-			request.Replace(k, v)
+
+		current := searchResult.Entries[0]
+
+		if strings.Compare(current.GetAttributeValue("entryDN"), *entry.Spec.DN) != 0 {
+			dn, _ := ldap.ParseDN(*entry.Spec.DN)
+			newSup := &ldap.DN{
+				RDNs: []*ldap.RelativeDN{},
+			}
+			copy(dn.RDNs, newSup.RDNs)
+			newSup.RDNs = slices.Delete(newSup.RDNs, 0, 0)
+			moddn := ldap.NewModifyDNRequest(
+				current.GetAttributeValue("entryDN"),
+				dn.RDNs[0].String(),
+				true,
+				newSup.String(),
+			)
+			if err = cli.ModifyDN(moddn); err != nil {
+				return err
+			}
+			r.Recorder.Eventf(entry, "Normal", "Success", "entry DN updated to %s", *entry.Spec.DN)
+		}
+
+		for k, v := range entry.Spec.Attributes {
+			if len(current.GetAttributeValues(k)) == 0 {
+				request.Add(k, v)
+				continue
+			}
+			if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
+				request.Replace(k, v)
+			}
 		}
 	}
 
 	if len(request.Changes) > 0 {
 		return cli.Modify(request)
 	}
+
 	return nil
 }
 
 func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) (ctrl.Result, error) {
 
-	r.Recorder.Eventf(entry, "Normal", "Success", "Entry %s reconciled", *entry.Spec.DN)
+	r.Recorder.Eventf(entry, "Normal", "Success", "entry %s reconciled", *entry.Spec.DN)
 
 	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
 		Type:               typeAvailable,

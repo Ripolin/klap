@@ -80,6 +80,10 @@ type EntryStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// EntryUUID of the remote entry.
+	// +optional
+	EntryUUID *string `json:"entryUUID"`
 }
 
 // +kubebuilder:object:root=true

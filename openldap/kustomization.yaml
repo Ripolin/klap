@@ -1,3 +1,9 @@
 namespace: openldap
 resources:
   - openldap.yaml
+configMapGenerator:
+  - name: openldap-customize
+    files:
+      - customize.sh
+generatorOptions:
+  disableNameSuffixHash: true

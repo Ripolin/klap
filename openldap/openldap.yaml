@@ -59,6 +59,10 @@ spec:
         - name: openldap
           image: bitnamilegacy/openldap:2.6.10-debian-12-r4
           env:
+            - name: BITNAMI_DEBUG
+              value: "yes"
+            - name: LDAP_CONFIG_ADMIN_ENABLED
+              value: "yes"
             - name: LDAP_ENABLE_TLS
               value: "yes"
             - name: LDAP_TLS_CERT_FILE
@@ -78,10 +82,16 @@ spec:
             - name: server-cert
               mountPath: /var/run/tls
               readOnly: true
+            - name: customize
+              mountPath: /docker-entrypoint-initdb.d
       volumes:
         - name: server-cert
           secret:
             secretName: openldap-server-cert
+        - name: customize
+          configMap:
+            name: openldap-customize
+            defaultMode: 0555
   volumeClaimTemplates:
     - metadata:
         name: data
