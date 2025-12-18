@@ -14,7 +14,17 @@ spec:
     singular: entry
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.dn
+      name: DN
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Available")].status
+      name: AVAILABLE
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: Entry is the Schema for the entries API
