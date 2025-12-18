@@ -108,19 +108,13 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	serverConfig, err := r.getServerConfig(ctx, &entry)
 
 	if err != nil {
-		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
 	if entry.Spec.TlsSecretRef.Name != nil {
 		tlsConfig, err := r.getTlsConfig(ctx, &entry)
 		if err != nil {
-			if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+			return r.setStatusUnavailable(ctx, &entry, err)
 		}
 		if _, ok := tlsConfig.Data["ca.crt"]; ok {
 			tlsCfg.RootCAs.AppendCertsFromPEM(tlsConfig.Data["ca.crt"])
@@ -130,10 +124,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	serverUrl, err := url.Parse(string(serverConfig.Data[Url]))
 
 	if err != nil {
-		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
 	tlsCfg.ServerName = serverUrl.Hostname()
@@ -141,19 +132,13 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	cli, err = ldap.DialURL(serverUrl.String(), ldap.DialWithTLSConfig(tlsCfg))
 
 	if err != nil {
-		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
 	if raw, ok := serverConfig.Data["start_tls"]; ok && strings.Compare("ldap", serverUrl.Scheme) == 0 {
 		if startTls, _ := strconv.ParseBool(string(raw)); startTls {
 			if err = cli.StartTLS(tlsCfg); err != nil {
-				if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-					return ctrl.Result{}, err
-				}
-				return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+				return r.setStatusUnavailable(ctx, &entry, err)
 			}
 		}
 	}
@@ -161,10 +146,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	err = cli.Bind(string(serverConfig.Data[BindDN]), string(serverConfig.Data[Password]))
 
 	if err != nil {
-		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
 	defer func() {
@@ -179,10 +161,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 		err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{}))
 		if err != nil {
-			if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+			return r.setStatusUnavailable(ctx, &entry, err)
 		}
 
 		if controllerutil.RemoveFinalizer(&entry, Finalizer) {
@@ -207,10 +186,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	searchResult, err := cli.Search(search)
 
 	if err != nil {
-		if err = r.setStatusUnavailable(ctx, &entry, err); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
 	if len(searchResult.Entries) > 0 {
@@ -218,31 +194,24 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		err := r.updateEntry(cli, searchResult.Entries[0], &entry)
 
 		if err != nil {
-			err = r.setStatusUnavailable(ctx, &entry, err)
-			return ctrl.Result{}, err
+			return r.setStatusUnavailable(ctx, &entry, err)
 		}
 
 		if meta.IsStatusConditionFalse(entry.Status.Conditions, typeAvailable) {
-			if err = r.setStatusAvailable(ctx, &entry); err != nil {
-				return ctrl.Result{}, err
-			}
+			return r.setStatusAvailable(ctx, &entry)
 		}
 
 		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+
 	}
 
 	err = r.addEntry(cli, &entry)
 
 	if err != nil {
-		err = r.setStatusUnavailable(ctx, &entry, err)
-		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
-	if err = r.setStatusAvailable(ctx, &entry); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+	return r.setStatusAvailable(ctx, &entry)
 }
 
 func (r *EntryReconciler) getServerConfig(ctx context.Context, entry *klapv1alpha1.Entry) (*corev1.Secret, error) {
@@ -315,7 +284,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, current *ldap.Entry, entr
 	return nil
 }
 
-func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) error {
+func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) (ctrl.Result, error) {
 
 	r.Recorder.Eventf(entry, "Normal", "Success", "Entry %s reconciled", *entry.Spec.DN)
 
@@ -327,14 +296,14 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 		ObservedGeneration: entry.Generation,
 	}) {
 		if err := r.Status().Update(ctx, entry); err != nil {
-			return err
+			return ctrl.Result{}, err
 		}
 	}
 
-	return nil
+	return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
 }
 
-func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) error {
+func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) (ctrl.Result, error) {
 
 	r.Recorder.Event(entry, "Warning", "Error", err.Error())
 
@@ -346,11 +315,11 @@ func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv
 		ObservedGeneration: entry.Generation,
 	}) {
 		if err := r.Status().Update(ctx, entry); err != nil {
-			return err
+			return ctrl.Result{}, err
 		}
 	}
 
-	return nil
+	return ctrl.Result{RequeueAfter: requeueAfterError}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
