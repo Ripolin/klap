@@ -1,8 +1,10 @@
-# klap
-// TODO(user): Add simple overview of use/purpose
+# 👏 klap
+![WIP](https://img.shields.io/badge/status-WIP-orange)
+
+Status: Work in progress — This project is under active development.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+`klap` is a Kubernetes operator that declaratively manages LDAP directory entries using a custom resource (`Entry`). It synchronizes the desired state defined in Kubernetes with a remote LDAP server: creating and updating entries, optionally pruning them on deletion, and recording the remote `entryUUID` in status. The operator supports TLS (including custom CA bundles), StartTLS, and enforces DN validation and sensible defaults via webhooks.
 
 ## Getting Started
 
@@ -13,123 +15,185 @@
 - Access to a Kubernetes v1.11.3+ cluster.
 
 ### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+
+This document explains how to install and use the `klap` Kubernetes operator to manage LDAP entries using the `Entry` custom resource.
+
+**Quick links**
+- CRD sample: [config/samples/klap_v1alpha1_entry.yaml](config/samples/klap_v1alpha1_entry.yaml)
+- API: [api/v1alpha1/entry_types.go](api/v1alpha1/entry_types.go)
+
+### Overview
+
+The `klap` operator synchronizes LDAP entries from Kubernetes `Entry` custom resources to a remote LDAP server. It can create, update and (optionally) delete entries on the LDAP server.
+
+Key behavior:
+- On create/update the operator will add or modify the remote LDAP entry to match the `Entry` spec.
+- On delete the operator will remove the remote entry only if `spec.prune` is true.
+- A validating + mutating webhook provides defaults and validates the `Entry` resource (DN validation + finalizer and secret namespace defaults).
+
+### Requirements
+
+- Kubernetes cluster (the project was scaffolded with kubebuilder; tests assume v1.11+ but use a modern cluster for webhooks).
+- `kubectl`, `make`, `docker` (for building images).
+
+### Installation
+
+Build and push the operator image (set `IMG`):
 
 ```sh
-make docker-build docker-push IMG=<some-registry>/klap:tag
+make docker-build docker-push IMG=<registry>/klap:tag
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
+Install the CRDs:
 
 ```sh
 make install
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+Deploy the manager (controller + webhooks) using your published image:
 
 ```sh
-make deploy IMG=<some-registry>/klap:tag
+make deploy IMG=<registry>/klap:tag
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
-```
-
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
+To uninstall:
 
 ```sh
 make undeploy
+make uninstall
 ```
 
-## Project Distribution
+You can also use the generated installer bundle in `dist/install.yaml`.
 
-Following the options to release and provide this solution to the users.
+### The `Entry` CRD (reference)
 
-### By providing a bundle with all YAML files
+Resource: `apiVersion: klap.ripolin.github.com/v1alpha1`, `kind: Entry`.
 
-1. Build the installer for the image built and published in the registry:
+- `spec.dn` (string, required) — Distinguished Name of the LDAP entry (must be a valid DN).
+- `spec.prune` (bool, default: true) — Whether to delete the remote LDAP entry when the Kubernetes `Entry` is deleted.
+- `spec.attributes` (map[string][]string, optional) — Attributes to set on the LDAP entry. These are reconciled on updates.
+- `spec.initAttributes` (map[string][]string, optional) — Attributes only set at creation time; not reconciled afterwards.
+- `spec.serverSecretRef` (SecretRef, required) — Reference to a Kubernetes `Secret` holding the LDAP server configuration. The webhook will default its `namespace` to the `Entry` namespace if omitted.
+- `spec.tlsSecretRef` (SecretRef, optional) — Reference to a Kubernetes `Secret` containing TLS material (CA) used for server TLS verification.
+
+`SecretRef` fields:
+- `name` (string, required)
+- `namespace` (string, optional)
+
+Important: Do not set operational attributes (for example: createTimestamp, modifyTimestamp, entryUUID) in `initAttributes` or `attributes`. These attributes are managed by the LDAP server and may be rejected, ignored or overwritten. Use non-operational attributes (for example `description`, `location`, `title`) for initial metadata.
+
+#### Server secret expected keys
+
+`spec.serverSecretRef` must reference a `v1` Secret containing the following keys in `data` or `stringData` (all values are strings):
+
+- `url` — LDAP URL, e.g. `ldap://ldap.example.svc:389` or `ldaps://ldap.example.svc:636`.
+- `bind_dn` — Bind DN used to authenticate to the LDAP server.
+- `password` — Password for the `bind_dn`.
+- `base_dn` — Base DN to use when searching for entries.
+- `start_tls` — Optional boolean as string (`"true"` or `"false"`). If present and the server URL scheme is `ldap`, `start_tls` will trigger StartTLS.
+
+Example server secret (stringData form for readability):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+    name: ldap-server
+    namespace: default
+type: Opaque
+stringData:
+    url: ldap://ldap.openldap.svc:389
+    bind_dn: cn=admin,dc=example,dc=org
+    password: supersecret
+    base_dn: dc=example,dc=org
+    start_tls: "false"
+```
+
+#### TLS secret expected keys
+
+If `spec.tlsSecretRef` is provided, the referenced secret should include a PEM-encoded CA certificate under the key `ca.crt` (the controller will append those certs to the TLS root pool).
+
+Example TLS secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+    name: ldap-tls
+    namespace: default
+type: Opaque
+data:
+    ca.crt: |+ # base64-encoded PEM content (example placeholder)
+        LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg==
+```
+
+### Example `Entry` resource
+
+See the sample under [config/samples/klap_v1alpha1_entry.yaml](config/samples/klap_v1alpha1_entry.yaml).
+
+A minimal example with server/tls references:
+
+```yaml
+apiVersion: klap.ripolin.github.com/v1alpha1
+kind: Entry
+metadata:
+    name: example-entry
+    namespace: default
+spec:
+    dn: cn=joe,dc=example,dc=org
+    prune: true
+    attributes:
+        objectClass:
+            - inetOrgPerson
+        sn:
+            - Doe
+    serverSecretRef:
+        name: ldap-server
+        namespace: default
+    tlsSecretRef:
+        name: ldap-tls
+        namespace: default
+```
+
+Behavior notes:
+- If an `Entry` is created and the remote entry does not exist, the operator will create it and populate `status.entryUUID` with the remote UUID.
+- If `status.entryUUID` is set the operator will attempt to update the corresponding LDAP entry (matching by `entryUUID`).
+- If the `Entry` is deleted and `spec.prune` is true, the operator will delete the remote LDAP entry.
+
+### Webhooks and defaults
+
+The operator registers both a mutating (defaulter) and validating webhook for `Entry`:
+- The defaulter adds a finalizer (`klap.ripolin.github.com/finalizer`) on new `Entry` objects and will default `serverSecretRef.namespace` and `tlsSecretRef.namespace` to the resource namespace when omitted.
+- The validator checks that `spec.dn` is a syntactically valid LDAP DN.
+
+Note: webhooks require the manager to be deployed with webhook configuration (this is handled by `make deploy` which applies the `config/webhook` kustomize manifests).
+
+### RBAC
+
+The controller requires permission to read secrets and manage `entries` resources. The repository includes RBAC manifests under `config/rbac/` that will be applied by the installer.
+
+### Observability & troubleshooting
+
+- Check `Entry` status and events:
+### Development / Testing
+
+Run the sample locally (kind/minikube) with the default make targets:
 
 ```sh
-make build-installer IMG=<some-registry>/klap:tag
+# install CRDs
+make install
+# build and deploy controller (use local registry or update IMG)
+make docker-build docker-push IMG=<registry>/klap:dev
+make deploy IMG=<registry>/klap:dev
+# apply example
+kubectl apply -k config/samples/
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
+### Next steps / Recommendations
 
-2. Using the installer
+- Add a documented example `Secret` in `config/samples/` that contains realistic keys and values (redact sensitive values).
+- Consider publishing documentation as a site (mkdocs or GitHub Pages).
 
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/klap/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+---
+Generated from source: [PROJECT](PROJECT), [api/v1alpha1/entry_types.go](api/v1alpha1/entry_types.go), [internal/controller/entry_controller.go](internal/controller/entry_controller.go), and webhook defaults in [internal/webhook/v1alpha1/entry_webhook.go](internal/webhook/v1alpha1/entry_webhook.go).
 

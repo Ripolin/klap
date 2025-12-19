@@ -5,5 +5,23 @@ metadata:
     app.kubernetes.io/name: klap
     app.kubernetes.io/managed-by: kustomize
   name: entry-sample
+  namespace: default
 spec:
-  # TODO(user): Add fields here
+  dn: cn=joe,dc=example,dc=org
+  prune: true
+  attributes:
+    objectClass:
+      - inetOrgPerson
+    sn:
+      - Doe
+    mail:
+      - joe@example.org
+  initAttributes:
+    description:
+      - "Imported by klap"
+  serverSecretRef:
+    name: ldap-server
+    namespace: default
+  tlsSecretRef:
+    name: ldap-tls
+    namespace: default
