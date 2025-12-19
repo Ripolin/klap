@@ -299,9 +299,9 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 		}
 
 		current := searchResult.Entries[0]
+		dn, _ := ldap.ParseDN(*entry.Spec.DN)
 
 		if strings.Compare(current.GetAttributeValue("entryDN"), *entry.Spec.DN) != 0 {
-			dn, _ := ldap.ParseDN(*entry.Spec.DN)
 			newSup := &ldap.DN{
 				RDNs: []*ldap.RelativeDN{},
 			}
@@ -326,6 +326,17 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 			}
 			if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
 				request.Replace(k, v)
+			}
+		}
+
+		if entry.Spec.Force {
+			for _, attr := range current.Attributes {
+				if attr.Name == "entryDN" || strings.Compare(attr.Name, dn.RDNs[0].Attributes[0].Type) == 0 {
+					continue
+				}
+				if _, ok := entry.Spec.Attributes[attr.Name]; !ok {
+					request.Delete(attr.Name, []string{})
+				}
 			}
 		}
 	}

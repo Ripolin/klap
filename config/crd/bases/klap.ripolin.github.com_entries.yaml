@@ -60,6 +60,11 @@ spec:
                 description: DN (distinguished name) is a unique identifier that pinpoints
                   the entry in an LDAP directory
                 type: string
+              force:
+                default: false
+                description: Force indicates if entry modification should be forced
+                  even if it leads to data loss
+                type: boolean
               initAttributes:
                 additionalProperties:
                   items:
@@ -99,6 +104,7 @@ spec:
                 type: object
             required:
             - dn
+            - force
             - prune
             - serverSecretRef
             type: object

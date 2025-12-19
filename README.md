@@ -65,20 +65,66 @@ make uninstall
 
 You can also use the generated installer bundle in `dist/install.yaml`.
 
-### The `Entry` CRD (reference)
+### About the `Entry` CRD
 
 Resource: `apiVersion: klap.ripolin.github.com/v1alpha1`, `kind: Entry`.
 
-- `spec.dn` (string, required) — Distinguished Name of the LDAP entry (must be a valid DN).
-- `spec.prune` (bool, default: true) — Whether to delete the remote LDAP entry when the Kubernetes `Entry` is deleted.
-- `spec.attributes` (map[string][]string, optional) — Attributes to set on the LDAP entry. These are reconciled on updates.
-- `spec.initAttributes` (map[string][]string, optional) — Attributes only set at creation time; not reconciled afterwards.
-- `spec.serverSecretRef` (SecretRef, required) — Reference to a Kubernetes `Secret` holding the LDAP server configuration. The webhook will default its `namespace` to the `Entry` namespace if omitted.
-- `spec.tlsSecretRef` (SecretRef, optional) — Reference to a Kubernetes `Secret` containing TLS material (CA) used for server TLS verification.
+Purpose: declare a single LDAP directory entry to be managed by the operator.
 
-`SecretRef` fields:
+Top-level fields (summary):
+
+- `spec.dn` (string, required): the LDAP Distinguished Name for the entry. The webhook validates DN syntax.
+- `spec.prune` (bool, default: true): when true the operator will delete the remote LDAP entry when the `Entry` resource is deleted.
+- `spec.attributes` (map[string][]string, optional): attributes reconciled on each update. Keys are LDAP attribute names; values are lists of strings.
+- `spec.initAttributes` (map[string][]string, optional): attributes applied only at creation time and not reconciled afterwards.
+- `spec.serverSecretRef` (SecretRef, required): reference to a `Secret` containing LDAP server connection details (see below). The webhook defaults the `namespace` to the Entry's namespace when omitted.
+- `spec.tlsSecretRef` (SecretRef, optional): reference to a `Secret` containing TLS CA material (`ca.crt`).
+
+
+`SecretRef` structure:
+
 - `name` (string, required)
 - `namespace` (string, optional)
+
+Status and metadata:
+
+- `status.entryUUID` (string): the remote LDAP entry UUID recorded after successful creation/search.
+- `status.conditions`: standard Kubernetes conditions are used (e.g., `Available` = True/False) to indicate synchronization state.
+- A finalizer `klap.ripolin.github.com/finalizer` is added by the defaulter to ensure prune behavior is executed before Kubernetes removes the resource.
+
+Example `Entry` resource (concise):
+
+```yaml
+apiVersion: klap.ripolin.github.com/v1alpha1
+kind: Entry
+metadata:
+    name: example-entry
+    namespace: default
+spec:
+    dn: cn=joe,dc=example,dc=org
+    prune: true
+    attributes:
+        objectClass:
+            - inetOrgPerson
+        sn:
+            - Doe
+    initAttributes:
+        description:
+            - "Imported by klap"
+    serverSecretRef:
+        name: ldap-server
+        namespace: default
+    tlsSecretRef:
+        name: ldap-tls
+        namespace: default
+```
+
+Controller behavior summary:
+
+- On create: the operator attempts to add the entry to the remote LDAP server. If the entry exists, it records the remote `entryUUID` in status.
+- On update: if `status.entryUUID` exists the operator will locate the remote entry by `entryUUID` and reconcile attribute changes; `initAttributes` are ignored on updates.
+- On delete: if `spec.prune` is true the operator will delete the remote LDAP entry before removing the finalizer.
+
 
 Important: Do not set operational attributes (for example: createTimestamp, modifyTimestamp, entryUUID) in `initAttributes` or `attributes`. These attributes are managed by the LDAP server and may be rejected, ignored or overwritten. Use non-operational attributes (for example `description`, `location`, `title`) for initial metadata.
 

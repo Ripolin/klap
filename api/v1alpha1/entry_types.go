@@ -32,6 +32,11 @@ type EntrySpec struct {
 	// +require
 	Prune bool `json:"prune"`
 
+	// Force indicates if entry modification should be forced even if it leads to data loss
+	// +default:value=false
+	// +require
+	Force bool `json:"force"`
+
 	// Attributes associated to the entry depends its classes
 	// +optional
 	Attributes map[string][]string `json:"attributes,omitzero"`
