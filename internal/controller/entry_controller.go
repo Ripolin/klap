@@ -179,27 +179,11 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	baseDN := string(serverConfig.Data[BaseDN])
 
-	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
-	}
-
 	if entry.Status.EntryUUID != nil {
-
-		err := r.updateEntry(cli, &entry, &baseDN)
-
-		if err != nil {
-			return r.setStatusUnavailable(ctx, &entry, err)
-		}
-
-		if meta.IsStatusConditionFalse(entry.Status.Conditions, typeAvailable) {
-			return r.setStatusAvailable(ctx, &entry)
-		}
-
-		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
-
+		err = r.updateEntry(cli, &entry, &baseDN)
+	} else {
+		err = r.addEntry(cli, &entry, &baseDN)
 	}
-
-	err = r.addEntry(cli, &entry, &baseDN)
 
 	if err != nil {
 		return r.setStatusUnavailable(ctx, &entry, err)
@@ -283,7 +267,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 			BaseDN:     *baseDN,
 			Scope:      ldap.ScopeWholeSubtree,
 			Filter:     fmt.Sprintf("(entryUUID=%s)", *entry.Status.EntryUUID),
-			Attributes: []string{"*", "entryDN"},
+			Attributes: []string{"*"},
 		}
 	)
 
@@ -300,14 +284,14 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 		current := searchResult.Entries[0]
 		dn, _ := ldap.ParseDN(*entry.Spec.DN)
 
-		if current.GetAttributeValue("entryDN") != *entry.Spec.DN {
+		if current.DN != *entry.Spec.DN {
 			newSup := &ldap.DN{
 				RDNs: []*ldap.RelativeDN{},
 			}
 			copy(dn.RDNs, newSup.RDNs)
 			newSup.RDNs = slices.Delete(newSup.RDNs, 0, 0)
 			moddn := ldap.NewModifyDNRequest(
-				current.GetAttributeValue("entryDN"),
+				current.DN,
 				dn.RDNs[0].String(),
 				true,
 				newSup.String(),
@@ -330,7 +314,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 
 		if entry.Spec.Force {
 			for _, attr := range current.Attributes {
-				if attr.Name == "entryDN" || attr.Name == dn.RDNs[0].Attributes[0].Type {
+				if attr.Name == dn.RDNs[0].Attributes[0].Type {
 					continue
 				}
 				if _, ok := entry.Spec.Attributes[attr.Name]; !ok {
@@ -349,8 +333,6 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 
 func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) (ctrl.Result, error) {
 
-	r.Recorder.Eventf(entry, "Normal", "Success", "entry %s reconciled", *entry.Spec.DN)
-
 	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
 		Type:               typeAvailable,
 		Status:             metav1.ConditionTrue,
@@ -358,6 +340,7 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 		Message:            "Entry is synchronized with the remote server",
 		ObservedGeneration: entry.Generation,
 	}) {
+		r.Recorder.Eventf(entry, "Normal", "Success", "entry %s reconciled", *entry.Spec.DN)
 		if err := r.Status().Update(ctx, entry); err != nil {
 			return ctrl.Result{}, err
 		}

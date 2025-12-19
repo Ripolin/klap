@@ -78,7 +78,7 @@ Top-level fields (summary):
 - `spec.attributes` (map[string][]string, optional): attributes reconciled on each update. Keys are LDAP attribute names; values are lists of strings.
 - `spec.initAttributes` (map[string][]string, optional): attributes applied only at creation time and not reconciled afterwards.
 - `spec.serverSecretRef` (SecretRef, required): reference to a `Secret` containing LDAP server connection details (see below). The webhook defaults the `namespace` to the Entry's namespace when omitted.
-- `spec.tlsSecretRef` (SecretRef, optional): reference to a `Secret` containing TLS CA material (`ca.crt`).
+- `spec.tlsSecretRef` (SecretRef, optional): reference to a `Secret` containing TLS CA material (`ca.crt`). Like `spec.serverSecretRef`, the webhook defaults the `namespace` to the Entry's namespace when omitted.
 
 
 `SecretRef` structure:
