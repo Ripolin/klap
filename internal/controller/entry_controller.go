@@ -25,7 +25,6 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -137,7 +136,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
-	if raw, ok := serverConfig.Data[StartTLS]; ok && strings.Compare("ldap", serverUrl.Scheme) == 0 {
+	if raw, ok := serverConfig.Data[StartTLS]; ok && serverUrl.Scheme == "ldap" {
 		if startTls, _ := strconv.ParseBool(string(raw)); startTls {
 			if err = cli.StartTLS(tlsCfg); err != nil {
 				return r.setStatusUnavailable(ctx, &entry, err)
@@ -301,7 +300,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 		current := searchResult.Entries[0]
 		dn, _ := ldap.ParseDN(*entry.Spec.DN)
 
-		if strings.Compare(current.GetAttributeValue("entryDN"), *entry.Spec.DN) != 0 {
+		if current.GetAttributeValue("entryDN") != *entry.Spec.DN {
 			newSup := &ldap.DN{
 				RDNs: []*ldap.RelativeDN{},
 			}
@@ -331,7 +330,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 
 		if entry.Spec.Force {
 			for _, attr := range current.Attributes {
-				if attr.Name == "entryDN" || strings.Compare(attr.Name, dn.RDNs[0].Attributes[0].Type) == 0 {
+				if attr.Name == "entryDN" || attr.Name == dn.RDNs[0].Attributes[0].Type {
 					continue
 				}
 				if _, ok := entry.Spec.Attributes[attr.Name]; !ok {
