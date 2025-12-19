@@ -9,6 +9,7 @@ metadata:
 spec:
   dn: cn=joe,dc=example,dc=org
   prune: true
+  force: false
   attributes:
     objectClass:
       - inetOrgPerson
