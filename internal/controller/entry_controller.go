@@ -49,11 +49,13 @@ import (
 const (
 	BaseDN              = "base_dn"
 	BindDN              = "bind_dn"
+	CACertName          = "ca.crt"
 	Password            = "password"
+	StartTLS            = "start_tls"
 	Url                 = "url"
-	typeAvailable       = "Available"
 	requeueAfterSuccess = 5 * time.Minute
 	requeueAfterError   = time.Minute
+	typeAvailable       = "Available"
 )
 
 var Finalizer = fmt.Sprintf("%s/finalizer", klapv1alpha1.GroupVersion.Group)
@@ -116,8 +118,8 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if err != nil {
 			return r.setStatusUnavailable(ctx, &entry, err)
 		}
-		if _, ok := tlsConfig.Data["ca.crt"]; ok {
-			tlsCfg.RootCAs.AppendCertsFromPEM(tlsConfig.Data["ca.crt"])
+		if _, ok := tlsConfig.Data[CACertName]; ok {
+			tlsCfg.RootCAs.AppendCertsFromPEM(tlsConfig.Data[CACertName])
 		}
 	}
 
@@ -135,7 +137,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
-	if raw, ok := serverConfig.Data["start_tls"]; ok && strings.Compare("ldap", serverUrl.Scheme) == 0 {
+	if raw, ok := serverConfig.Data[StartTLS]; ok && strings.Compare("ldap", serverUrl.Scheme) == 0 {
 		if startTls, _ := strconv.ParseBool(string(raw)); startTls {
 			if err = cli.StartTLS(tlsCfg); err != nil {
 				return r.setStatusUnavailable(ctx, &entry, err)
