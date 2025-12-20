@@ -75,6 +75,7 @@ Top-level fields (summary):
 
 - `spec.dn` (string, required): the LDAP Distinguished Name for the entry. The webhook validates DN syntax.
 - `spec.prune` (bool, default: true): when true the operator will delete the remote LDAP entry when the `Entry` resource is deleted.
+- `spec.force` (bool, default: false): when true the operator will force modifications to the remote entry even if they may lead to data loss (for example removing attributes). Use with caution.
 - `spec.attributes` (map[string][]string, optional): attributes reconciled on each update. Keys are LDAP attribute names; values are lists of strings.
 - `spec.initAttributes` (map[string][]string, optional): attributes applied only at creation time and not reconciled afterwards.
 - `spec.serverSecretRef` (SecretRef, required): reference to a `Secret` containing LDAP server connection details (see below). The webhook defaults the `namespace` to the Entry's namespace when omitted.
@@ -188,6 +189,7 @@ metadata:
 spec:
     dn: cn=joe,dc=example,dc=org
     prune: true
+    force: false
     attributes:
         objectClass:
             - inetOrgPerson
