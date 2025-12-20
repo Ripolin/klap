@@ -129,6 +129,7 @@ func (v *EntryCustomValidator) ValidateDelete(ctx context.Context, obj runtime.O
 	return nil, nil
 }
 
+// validateEntry performs validation on the Entry resource.
 func validateEntry(entry *klapv1alpha1.Entry) error {
 	var allErrs field.ErrorList
 

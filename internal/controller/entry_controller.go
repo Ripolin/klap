@@ -192,6 +192,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	return r.setStatusAvailable(ctx, &entry)
 }
 
+// getServerConfig retrieves the server configuration secret referenced by the Entry.
 func (r *EntryReconciler) getServerConfig(ctx context.Context, entry *klapv1alpha1.Entry) (*corev1.Secret, error) {
 	var (
 		secret = &corev1.Secret{}
@@ -207,6 +208,7 @@ func (r *EntryReconciler) getServerConfig(ctx context.Context, entry *klapv1alph
 	return secret, nil
 }
 
+// getTlsConfig retrieves the TLS configuration secret referenced by the Entry.
 func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.Entry) (*corev1.Secret, error) {
 	var (
 		secret = &corev1.Secret{}
@@ -222,6 +224,7 @@ func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.
 	return secret, nil
 }
 
+// addEntry adds a new LDAP entry based on the provided Entry specification.
 func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN *string) error {
 	var (
 		attributes = map[string][]string{}
@@ -260,6 +263,7 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, b
 	return nil
 }
 
+// updateEntry updates an existing LDAP entry based on the provided Entry specification.
 func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN *string) error {
 	var (
 		request = ldap.NewModifyRequest(*entry.Spec.DN, []ldap.Control{})
@@ -288,8 +292,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 			newSup := &ldap.DN{
 				RDNs: []*ldap.RelativeDN{},
 			}
-			copy(dn.RDNs, newSup.RDNs)
-			newSup.RDNs = slices.Delete(newSup.RDNs, 0, 0)
+			newSup.RDNs = append(newSup.RDNs, dn.RDNs[1:]...)
 			moddn := ldap.NewModifyDNRequest(
 				current.DN,
 				dn.RDNs[0].String(),
@@ -331,6 +334,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 	return nil
 }
 
+// setStatusAvailable updates the Entry status to Available.
 func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) (ctrl.Result, error) {
 
 	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
@@ -349,6 +353,7 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 	return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
 }
 
+// setStatusUnavailable updates the Entry status to Unavailable with the provided error message.
 func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) (ctrl.Result, error) {
 
 	r.Recorder.Event(entry, "Warning", "Error", err.Error())
