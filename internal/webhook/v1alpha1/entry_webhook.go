@@ -32,6 +32,7 @@ import (
 
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
 	"github.com/ripolin/klap/internal/controller"
+	"github.com/ripolin/klap/internal/util"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -55,9 +56,13 @@ func SetupEntryWebhookWithManager(mgr ctrl.Manager) error {
 //
 // NOTE: The +kubebuilder:object:generate=false marker prevents controller-gen from generating DeepCopy methods,
 // as it is used only for temporary operations and does not need to be deeply copied.
-type EntryCustomDefaulter struct{}
+type EntryCustomDefaulter struct {
+	SSHAEncoder util.SSHAEncoder
+}
 
-var _ webhook.CustomDefaulter = &EntryCustomDefaulter{}
+var _ webhook.CustomDefaulter = &EntryCustomDefaulter{
+	SSHAEncoder: util.SSHAEncoder{},
+}
 
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind Entry.
 func (d *EntryCustomDefaulter) Default(_ context.Context, obj runtime.Object) error {
@@ -80,6 +85,19 @@ func (d *EntryCustomDefaulter) Default(_ context.Context, obj runtime.Object) er
 		entry.Spec.TlsSecretRef.Namespace = &entry.Namespace
 	}
 
+	if passwords, ok := entry.Spec.Attributes["userPassword"]; ok {
+		for i, password := range passwords {
+			if util.HashedPassword.MatchString(password) {
+				continue
+			}
+			hashedPassword, err := d.SSHAEncoder.Encode([]byte(password))
+			if err != nil {
+				return fmt.Errorf("failed to hash password for Entry %s: %v", entry.Name, err)
+			}
+			passwords[i] = string(hashedPassword)
+		}
+	}
+
 	return nil
 }
 
@@ -90,9 +108,7 @@ func (d *EntryCustomDefaulter) Default(_ context.Context, obj runtime.Object) er
 //
 // NOTE: The +kubebuilder:object:generate=false marker prevents controller-gen from generating DeepCopy methods,
 // as this struct is used only for temporary operations and does not need to be deeply copied.
-type EntryCustomValidator struct {
-	// TODO(user): Add more fields as needed for validation
-}
+type EntryCustomValidator struct{}
 
 var _ webhook.CustomValidator = &EntryCustomValidator{}
 

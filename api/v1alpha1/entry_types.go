@@ -41,10 +41,6 @@ type EntrySpec struct {
 	// +optional
 	Attributes map[string][]string `json:"attributes,omitzero"`
 
-	// InitAttributes unlike attributes are not remediated and are only define at entry creation
-	// +optional
-	InitAttributes map[string][]string `json:"initAttributes,omitzero"`
-
 	// ServerSecretRef pinpoint a secret containing LDAP server configuration
 	// +required
 	ServerSecretRef SecretRef `json:"serverSecretRef"`

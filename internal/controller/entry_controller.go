@@ -21,7 +21,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"maps"
 	"net/url"
 	"slices"
 	"strconv"
@@ -227,9 +226,8 @@ func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.
 // addEntry adds a new LDAP entry based on the provided Entry specification.
 func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN *string) error {
 	var (
-		attributes = map[string][]string{}
-		request    = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
-		search     = &ldap.SearchRequest{
+		request = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
+		search  = &ldap.SearchRequest{
 			BaseDN:     *baseDN,
 			Scope:      ldap.ScopeWholeSubtree,
 			Filter:     fmt.Sprintf("(entryDN=%s)", *entry.Spec.DN),
@@ -237,10 +235,7 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, b
 		}
 	)
 
-	maps.Copy(attributes, entry.Spec.Attributes)
-	maps.Copy(attributes, entry.Spec.InitAttributes)
-
-	for k, v := range attributes {
+	for k, v := range entry.Spec.Attributes {
 		request.Attributes = append(request.Attributes, ldap.Attribute{
 			Type: k,
 			Vals: v,
@@ -310,8 +305,16 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 				request.Add(k, v)
 				continue
 			}
-			if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
-				request.Replace(k, v)
+			if entry.Spec.Force {
+				if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
+					request.Replace(k, v)
+				}
+			} else {
+				for _, val := range v {
+					if !slices.Contains(current.GetAttributeValues(k), val) {
+						request.Add(k, []string{val})
+					}
+				}
 			}
 		}
 

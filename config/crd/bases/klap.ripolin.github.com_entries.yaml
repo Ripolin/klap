@@ -65,14 +65,6 @@ spec:
                 description: Force indicates if entry modification should be forced
                   even if it leads to data loss
                 type: boolean
-              initAttributes:
-                additionalProperties:
-                  items:
-                    type: string
-                  type: array
-                description: InitAttributes unlike attributes are not remediated and
-                  are only define at entry creation
-                type: object
               prune:
                 default: true
                 description: Prune indicates if entry should be delete or not

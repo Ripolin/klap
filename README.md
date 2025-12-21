@@ -75,9 +75,8 @@ Top-level fields (summary):
 
 - `spec.dn` (string, required): the LDAP Distinguished Name for the entry. The webhook validates DN syntax.
 - `spec.prune` (bool, default: true): when true the operator will delete the remote LDAP entry when the `Entry` resource is deleted.
-- `spec.force` (bool, default: false): when true the operator will force modifications to the remote entry even if they may lead to data loss (for example removing attributes). Use with caution.
+- `spec.force` (bool, default: false): when true the operator will force modifications to the remote entry even if they may lead to data loss (for example overriding or removing attributes). Use with caution.
 - `spec.attributes` (map[string][]string, optional): attributes reconciled on each update. Keys are LDAP attribute names; values are lists of strings.
-- `spec.initAttributes` (map[string][]string, optional): attributes applied only at creation time and not reconciled afterwards.
 - `spec.serverSecretRef` (SecretRef, required): reference to a `Secret` containing LDAP server connection details (see below). The webhook defaults the `namespace` to the Entry's namespace when omitted.
 - `spec.tlsSecretRef` (SecretRef, optional): reference to a `Secret` containing TLS CA material (`ca.crt`). Like `spec.serverSecretRef`, the webhook defaults the `namespace` to the Entry's namespace when omitted.
 
@@ -109,7 +108,6 @@ spec:
             - inetOrgPerson
         sn:
             - Doe
-    initAttributes:
         description:
             - "Imported by klap"
     serverSecretRef:
@@ -123,11 +121,9 @@ spec:
 Controller behavior summary:
 
 - On create: the operator attempts to add the entry to the remote LDAP server. If the entry exists, it records the remote `entryUUID` in status.
-- On update: if `status.entryUUID` exists the operator will locate the remote entry by `entryUUID` and reconcile attribute changes; `initAttributes` are ignored on updates.
-- On delete: if `spec.prune` is true the operator will delete the remote LDAP entry before removing the finalizer.
+- On update: if `status.entryUUID` exists the operator will locate the remote entry by `entryUUID` and reconcile attribute 
 
-
-Important: Do not set operational attributes (for example: createTimestamp, modifyTimestamp, entryUUID) in `initAttributes` or `attributes`. These attributes are managed by the LDAP server and may be rejected, ignored or overwritten. Use non-operational attributes (for example `description`, `location`, `title`) for initial metadata.
+Important: Do not set operational attributes (for example: createTimestamp, modifyTimestamp, entryUUID) in `attributes`. These attributes are managed by the LDAP server and may be rejected, ignored or overwritten. Use non-operational attributes (for example `description`, `location`, `title`) for initial metadata.
 
 #### Server secret expected keys
 

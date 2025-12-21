@@ -17,7 +17,6 @@ spec:
       - Doe
     mail:
       - joe@example.org
-  initAttributes:
     description:
       - "Imported by klap"
   serverSecretRef:

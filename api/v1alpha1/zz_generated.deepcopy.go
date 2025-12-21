@@ -108,22 +108,6 @@ func (in *EntrySpec) DeepCopyInto(out *EntrySpec) {
 			(*out)[key] = outVal
 		}
 	}
-	if in.InitAttributes != nil {
-		in, out := &in.InitAttributes, &out.InitAttributes
-		*out = make(map[string][]string, len(*in))
-		for key, val := range *in {
-			var outVal []string
-			if val == nil {
-				(*out)[key] = nil
-			} else {
-				inVal := (*in)[key]
-				in, out := &inVal, &outVal
-				*out = make([]string, len(*in))
-				copy(*out, *in)
-			}
-			(*out)[key] = outVal
-		}
-	}
 	in.ServerSecretRef.DeepCopyInto(&out.ServerSecretRef)
 	in.TlsSecretRef.DeepCopyInto(&out.TlsSecretRef)
 }
