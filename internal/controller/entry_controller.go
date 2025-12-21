@@ -324,7 +324,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 					continue
 				}
 				if _, ok := entry.Spec.Attributes[attr.Name]; !ok {
-					request.Delete(attr.Name, []string{})
+					request.Delete(attr.Name, attr.Values)
 				}
 			}
 		}
