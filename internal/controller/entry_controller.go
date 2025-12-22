@@ -143,7 +143,13 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
-	err = cli.Bind(string(serverConfig.Data[BindDN]), string(serverConfig.Data[Password]))
+	bindDN, err := ldap.ParseDN(string(serverConfig.Data[BindDN]))
+
+	if err != nil {
+		return r.setStatusUnavailable(ctx, &entry, err)
+	}
+
+	err = cli.Bind(bindDN.String(), string(serverConfig.Data[Password]))
 
 	if err != nil {
 		return r.setStatusUnavailable(ctx, &entry, err)
@@ -176,12 +182,16 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	}
 
-	baseDN := string(serverConfig.Data[BaseDN])
+	baseDN, err := ldap.ParseDN(string(serverConfig.Data[BaseDN]))
+
+	if err != nil {
+		return r.setStatusUnavailable(ctx, &entry, err)
+	}
 
 	if entry.Status.EntryUUID != nil {
-		err = r.updateEntry(cli, &entry, &baseDN)
+		err = r.updateEntry(cli, &entry, baseDN.String())
 	} else {
-		err = r.addEntry(cli, &entry, &baseDN)
+		err = r.addEntry(cli, &entry, baseDN.String())
 	}
 
 	if err != nil {
@@ -224,11 +234,11 @@ func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.
 }
 
 // addEntry adds a new LDAP entry based on the provided Entry specification.
-func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN *string) error {
+func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN string) error {
 	var (
 		request = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
 		search  = &ldap.SearchRequest{
-			BaseDN:     *baseDN,
+			BaseDN:     baseDN,
 			Scope:      ldap.ScopeWholeSubtree,
 			Filter:     fmt.Sprintf("(entryDN=%s)", *entry.Spec.DN),
 			Attributes: []string{"entryUUID"},
@@ -259,11 +269,11 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, b
 }
 
 // updateEntry updates an existing LDAP entry based on the provided Entry specification.
-func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN *string) error {
+func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN string) error {
 	var (
 		request = ldap.NewModifyRequest(*entry.Spec.DN, []ldap.Control{})
 		search  = &ldap.SearchRequest{
-			BaseDN:     *baseDN,
+			BaseDN:     baseDN,
 			Scope:      ldap.ScopeWholeSubtree,
 			Filter:     fmt.Sprintf("(entryUUID=%s)", *entry.Status.EntryUUID),
 			Attributes: []string{"*"},
