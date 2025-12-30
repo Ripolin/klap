@@ -1,0 +1,29 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+    annotations:
+        {{- if .Values.certManager.enable }}
+        cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/klap-serving-cert
+        {{- end }}
+    name: klap-validating-webhook-configuration
+webhooks:
+    - admissionReviewVersions:
+        - v1
+      clientConfig:
+        service:
+            name: klap-webhook-service
+            namespace: {{ .Release.Namespace }}
+            path: /validate-klap-ripolin-github-com-v1alpha1-entry
+      failurePolicy: Fail
+      name: ventry-v1alpha1.kb.io
+      rules:
+        - apiGroups:
+            - klap.ripolin.github.com
+          apiVersions:
+            - v1alpha1
+          operations:
+            - CREATE
+            - UPDATE
+          resources:
+            - entries
+      sideEffects: None

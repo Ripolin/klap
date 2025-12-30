@@ -14,9 +14,12 @@ curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/$(go env GOARCH)/
 chmod +x kubectl
 mv kubectl /usr/local/bin/kubectl
 
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
+
 # docker network create -d=bridge --subnet=172.19.0.0/24 kind
 
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.2/cert-manager.yaml
+kubectl apply -k config/metrics-server
 kubectl apply -k config/openldap
 
 # kind version
@@ -24,3 +27,4 @@ kubebuilder version
 # docker --version
 go version
 kubectl version --client
+helm version
