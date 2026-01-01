@@ -4,15 +4,15 @@
 Status: Work in progress — This project is under active development.
 
 ## Description
-`klap` is a Kubernetes operator that declaratively manages LDAP directory entries using a custom resource (`Entry`). It synchronizes the desired state defined in Kubernetes with a remote LDAP server: creating and updating entries, optionally pruning them on deletion, and recording the remote `entryUUID` in status. The operator supports TLS (including custom CA bundles), StartTLS, and enforces DN validation and sensible defaults via webhooks.
+`klap` is a Kubernetes operator that declaratively manages LDAP directory entries using a custom resource (`Entry`). It synchronizes the desired state defined in Kubernetes with a remote LDAP server: creating and updating entries, optionally pruning them on deletion, and recording the remote `GUID` in status. The operator supports TLS (including custom CA bundles), StartTLS, and enforces DN validation and sensible defaults via webhooks.
 
 ## Getting Started
 
 ### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- Go version v1.25.5+ (see `go.mod`)
+- Docker (or another container runtime) installed for image builds
+- `kubectl` compatible with your cluster (recommended v1.25+)
+- Access to a Kubernetes cluster with support for CRDs and webhooks (v1.25+ recommended)
 
 ### To Deploy on the cluster
 
@@ -33,8 +33,8 @@ Key behavior:
 
 ### Requirements
 
-- Kubernetes cluster (the project was scaffolded with kubebuilder; tests assume v1.11+ but use a modern cluster for webhooks).
-- `kubectl`, `make`, `docker` (for building images).
+- Kubernetes cluster (the project was scaffolded with kubebuilder; use a modern cluster for webhooks — v1.25+ recommended).
+- `kubectl`, `make`, and a container runtime (Docker or alternative) for building and pushing images.
 
 ### Installation
 
@@ -88,7 +88,8 @@ Top-level fields (summary):
 
 Status and metadata:
 
-- `status.entryUUID` (string): the remote LDAP entry UUID recorded after successful creation/search.
+- `status.guid` (string): the remote LDAP Global Unique IDentifier recorded after successful creation/search. This value is sourced from the LDAP server and may be called `entryUUID` (OpenLDAP) or `objectGUID` (Active Directory).
+- `status.implementation` (string): the detected LDAP implementation where the entry was found. Possible values: `openldap` or `activedirectory`.
 - `status.conditions`: standard Kubernetes conditions are used (e.g., `Available` = True/False) to indicate synchronization state.
 - A finalizer `klap.ripolin.github.com/finalizer` is added by the defaulter to ensure prune behavior is executed before Kubernetes removes the resource.
 
@@ -120,8 +121,8 @@ spec:
 
 Controller behavior summary:
 
-- On create: the operator attempts to add the entry to the remote LDAP server. If the entry exists, it records the remote `entryUUID` in status.
-- On update: if `status.entryUUID` exists the operator will locate the remote entry by `entryUUID` and reconcile attribute 
+- On create: the operator attempts to add the entry to the remote LDAP server. If the entry already exists the controller will search the directory and record the remote identifier in `status.guid` and set `status.implementation` to either `openldap` or `activedirectory` depending on which attribute was present.
+- On update: if `status.guid` exists the operator will locate the remote entry by that identifier (using the attribute appropriate to `status.implementation`) and reconcile attributes from the `spec`.
 
 Important: Do not set operational attributes (for example: createTimestamp, modifyTimestamp, entryUUID) in `attributes`. These attributes are managed by the LDAP server and may be rejected, ignored or overwritten. Use non-operational attributes (for example `description`, `location`, `title`) for initial metadata.
 
@@ -200,8 +201,8 @@ spec:
 ```
 
 Behavior notes:
-- If an `Entry` is created and the remote entry does not exist, the operator will create it and populate `status.entryUUID` with the remote UUID.
-- If `status.entryUUID` is set the operator will attempt to update the corresponding LDAP entry (matching by `entryUUID`).
+- If an `Entry` is created and the remote entry does not exist, the operator will create it and populate `status.guid` with the remote identifier and set `status.implementation` to the detected server type.
+- If `status.guid` is set the operator will attempt to update the corresponding LDAP entry (matching by the implementation-specific attribute: `entryUUID` for OpenLDAP, `objectGUID` for Active Directory).
 - If the `Entry` is deleted and `spec.prune` is true, the operator will delete the remote LDAP entry.
 
 ### Webhooks and defaults
