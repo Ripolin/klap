@@ -44,6 +44,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
+// Global constants
 const (
 	BaseDN              = "base_dn"
 	BindDN              = "bind_dn"
@@ -54,6 +55,20 @@ const (
 	requeueAfterSuccess = 5 * time.Minute
 	requeueAfterError   = time.Minute
 	typeAvailable       = "Available"
+)
+
+// Active Directory constants
+const (
+	ActiveDirectory     = "activedirectory"
+	ActiveDirectoryGUID = "objectGUID"
+	ActiveDirectoryDN   = "distinguishedName"
+)
+
+// OpenLDAP constants
+const (
+	OpenLDAP     = "openldap"
+	OpenLDAPGUID = "entryUUID"
+	OpenLDAPDN   = "entryDN"
 )
 
 var Finalizer = fmt.Sprintf("%s/finalizer", klapv1alpha1.GroupVersion.Group)
@@ -82,6 +97,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		entry  klapv1alpha1.Entry
 		tlsCfg = &tls.Config{}
 		log    = logf.FromContext(ctx)
+		opts   = []ldap.DialOpt{}
 	)
 
 	if cacert, err := x509.SystemCertPool(); err != nil {
@@ -129,7 +145,11 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	tlsCfg.ServerName = serverUrl.Hostname()
 
-	cli, err = ldap.DialURL(serverUrl.String(), ldap.DialWithTLSConfig(tlsCfg))
+	if serverUrl.Scheme == "ldaps" {
+		opts = append(opts, ldap.DialWithTLSConfig(tlsCfg))
+	}
+
+	cli, err = ldap.DialURL(serverUrl.String(), opts...)
 
 	if err != nil {
 		return r.setStatusUnavailable(ctx, &entry, err)
@@ -188,7 +208,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.setStatusUnavailable(ctx, &entry, err)
 	}
 
-	if entry.Status.EntryUUID != nil {
+	if entry.Status.GUID != nil {
 		err = r.updateEntry(cli, &entry, baseDN.String())
 	} else {
 		err = r.addEntry(cli, &entry, baseDN.String())
@@ -236,23 +256,26 @@ func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.
 // addEntry adds a new LDAP entry based on the provided Entry specification.
 func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN string) error {
 	var (
-		request = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
-		search  = &ldap.SearchRequest{
-			BaseDN:     baseDN,
-			Scope:      ldap.ScopeWholeSubtree,
-			Filter:     fmt.Sprintf("(entryDN=%s)", *entry.Spec.DN),
-			Attributes: []string{"entryUUID"},
-		}
+		add    = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
+		search = ldap.NewSearchRequest(
+			baseDN,
+			ldap.ScopeWholeSubtree,
+			ldap.NeverDerefAliases,
+			0, 0, false,
+			fmt.Sprintf("(|(%[2]s=%[1]s)(%[3]s=%[1]s))", *entry.Spec.DN, OpenLDAPDN, ActiveDirectoryDN),
+			[]string{OpenLDAPGUID, ActiveDirectoryGUID},
+			nil,
+		)
 	)
 
 	for k, v := range entry.Spec.Attributes {
-		request.Attributes = append(request.Attributes, ldap.Attribute{
+		add.Attributes = append(add.Attributes, ldap.Attribute{
 			Type: k,
 			Vals: v,
 		})
 	}
 
-	if err := cli.Add(request); err != nil {
+	if err := cli.Add(add); err != nil {
 		if !ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) {
 			return err
 		}
@@ -261,8 +284,17 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, b
 	if searchResult, err := cli.Search(search); err != nil {
 		return err
 	} else {
-		entryUUID := searchResult.Entries[0].GetAttributeValue("entryUUID")
-		entry.Status.EntryUUID = &entryUUID
+		entryUUID := searchResult.Entries[0].GetAttributeValue(OpenLDAPGUID)
+		implementation := OpenLDAP
+		if entryUUID == "" {
+			entryUUID = searchResult.Entries[0].GetAttributeValue(ActiveDirectoryGUID)
+			implementation = ActiveDirectory
+		}
+		if entryUUID == "" {
+			return fmt.Errorf("unable to retrieve entry GUID")
+		}
+		entry.Status.GUID = &entryUUID
+		entry.Status.Implementation = &implementation
 	}
 
 	return nil
@@ -271,22 +303,29 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, b
 // updateEntry updates an existing LDAP entry based on the provided Entry specification.
 func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN string) error {
 	var (
-		request = ldap.NewModifyRequest(*entry.Spec.DN, []ldap.Control{})
-		search  = &ldap.SearchRequest{
-			BaseDN:     baseDN,
-			Scope:      ldap.ScopeWholeSubtree,
-			Filter:     fmt.Sprintf("(entryUUID=%s)", *entry.Status.EntryUUID),
-			Attributes: []string{"*"},
-		}
+		modify = ldap.NewModifyRequest(*entry.Spec.DN, []ldap.Control{})
+		search = ldap.NewSearchRequest(
+			baseDN,
+			ldap.ScopeWholeSubtree,
+			ldap.NeverDerefAliases,
+			0, 0, false,
+			fmt.Sprintf("(%s=%s)", OpenLDAPGUID, *entry.Status.GUID),
+			[]string{"*"},
+			nil,
+		)
 	)
+
+	if entry.Status.Implementation != nil && *entry.Status.Implementation == ActiveDirectory {
+		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryGUID, *entry.Status.GUID)
+	}
 
 	if searchResult, err := cli.Search(search); err != nil {
 		return err
 	} else {
 
 		if len(searchResult.Entries) == 0 {
-			entryUUID := *entry.Status.EntryUUID
-			entry.Status.EntryUUID = nil
+			entryUUID := *entry.Status.GUID
+			entry.Status.GUID = nil
 			return fmt.Errorf("entry %s not found", entryUUID)
 		}
 
@@ -312,17 +351,17 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 
 		for k, v := range entry.Spec.Attributes {
 			if len(current.GetAttributeValues(k)) == 0 {
-				request.Add(k, v)
+				modify.Add(k, v)
 				continue
 			}
 			if entry.Spec.Force {
 				if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
-					request.Replace(k, v)
+					modify.Replace(k, v)
 				}
 			} else {
 				for _, val := range v {
 					if !slices.Contains(current.GetAttributeValues(k), val) {
-						request.Add(k, []string{val})
+						modify.Add(k, []string{val})
 					}
 				}
 			}
@@ -330,18 +369,25 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 
 		if entry.Spec.Force {
 			for _, attr := range current.Attributes {
+
+				// unicodePwd is a special case in Active Directory that cannot be returned by an LDAP search
+				if attr.Name == "unicodePwd" {
+					continue
+				}
+				// Skip the RDN attribute computed from the DN
 				if attr.Name == dn.RDNs[0].Attributes[0].Type {
 					continue
 				}
+
 				if _, ok := entry.Spec.Attributes[attr.Name]; !ok {
-					request.Delete(attr.Name, attr.Values)
+					modify.Delete(attr.Name, attr.Values)
 				}
 			}
 		}
 	}
 
-	if len(request.Changes) > 0 {
-		return cli.Modify(request)
+	if len(modify.Changes) > 0 {
+		return cli.Modify(modify)
 	}
 
 	return nil

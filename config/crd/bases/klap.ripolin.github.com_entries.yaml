@@ -172,8 +172,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              entryUUID:
-                description: EntryUUID of the remote entry.
+              guid:
+                description: GUID is the global unique identifier of the remote entry.
+                type: string
+              implementation:
+                description: Implementation indicates the LDAP server implementation
+                  where the entry is stored.
                 type: string
             type: object
         required:

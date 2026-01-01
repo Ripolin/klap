@@ -82,9 +82,13 @@ type EntryStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// EntryUUID of the remote entry.
+	// GUID is the global unique identifier of the remote entry.
 	// +optional
-	EntryUUID *string `json:"entryUUID"`
+	GUID *string `json:"guid"`
+
+	// Implementation indicates the LDAP server implementation where the entry is stored.
+	// +optional
+	Implementation *string `json:"implementation"`
 }
 
 // +kubebuilder:object:root=true

@@ -132,8 +132,13 @@ func (in *EntryStatus) DeepCopyInto(out *EntryStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
-	if in.EntryUUID != nil {
-		in, out := &in.EntryUUID, &out.EntryUUID
+	if in.GUID != nil {
+		in, out := &in.GUID, &out.GUID
+		*out = new(string)
+		**out = **in
+	}
+	if in.Implementation != nil {
+		in, out := &in.Implementation, &out.Implementation
 		*out = new(string)
 		**out = **in
 	}
