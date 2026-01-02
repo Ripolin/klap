@@ -1,0 +1,13 @@
+apiVersion: klap.ripolin.github.com/v1alpha1
+kind: Server
+metadata:
+  labels:
+    app.kubernetes.io/name: klap
+    app.kubernetes.io/managed-by: kustomize
+  name: server-sample
+spec:
+  url: ldap://ldap.openldap.svc.cluster.local
+  baseDN: dc=example,dc=org
+  bindDN: cn=admin,dc=example,dc=org
+  passwordSecretRef:
+    name: ldap-passwd

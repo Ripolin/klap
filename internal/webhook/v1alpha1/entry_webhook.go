@@ -72,12 +72,8 @@ func (d *EntryCustomDefaulter) Default(_ context.Context, obj runtime.Object) er
 		controllerutil.AddFinalizer(entry, controller.Finalizer)
 	}
 
-	if entry.Spec.ServerSecretRef.Namespace == nil {
-		entry.Spec.ServerSecretRef.Namespace = &entry.Namespace
-	}
-
-	if entry.Spec.TlsSecretRef.Name != nil && entry.Spec.TlsSecretRef.Namespace == nil {
-		entry.Spec.TlsSecretRef.Namespace = &entry.Namespace
+	if entry.Spec.ServerRef.Namespace == nil {
+		entry.Spec.ServerRef.Namespace = &entry.Namespace
 	}
 
 	return nil

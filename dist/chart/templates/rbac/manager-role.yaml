@@ -44,3 +44,11 @@ rules:
         - get
         - patch
         - update
+    - apiGroups:
+        - klap.ripolin.github.com
+      resources:
+        - servers
+      verbs:
+        - get
+        - list
+        - watch

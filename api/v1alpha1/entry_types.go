@@ -41,23 +41,19 @@ type EntrySpec struct {
 	// +optional
 	Attributes map[string][]string `json:"attributes,omitzero"`
 
-	// ServerSecretRef pinpoint a secret containing LDAP server configuration
+	// ServerRef is a reference to a server configuration
 	// +required
-	ServerSecretRef SecretRef `json:"serverSecretRef"`
-
-	// TlsSecretRef pinpoint a secret containing TLS configuration
-	// +optional
-	TlsSecretRef SecretRef `json:"tlsSecretRef,omitzero"`
+	ServerRef ResourceRef `json:"serverRef"`
 }
 
-// SecretRef defines a reference to a kubernetes secret
-type SecretRef struct {
+// ResourceRef defines a reference to a kubernetes resource
+type ResourceRef struct {
 
-	// Name of a secret
+	// Name of a resource
 	// +required
 	Name *string `json:"name"`
 
-	// Namespace of a secret
+	// Namespace of a resource
 	// +optional
 	Namespace *string `json:"namespace"`
 }
@@ -85,10 +81,6 @@ type EntryStatus struct {
 	// GUID is the global unique identifier of the remote entry.
 	// +optional
 	GUID *string `json:"guid"`
-
-	// Implementation indicates the LDAP server implementation where the entry is stored.
-	// +optional
-	Implementation *string `json:"implementation"`
 }
 
 // +kubebuilder:object:root=true

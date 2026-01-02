@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
-	"strconv"
 	"time"
 
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -46,12 +45,6 @@ import (
 
 // Global constants
 const (
-	BaseDN              = "base_dn"
-	BindDN              = "bind_dn"
-	CACertName          = "ca.crt"
-	Password            = "password"
-	StartTLS            = "start_tls"
-	Url                 = "url"
 	requeueAfterSuccess = 5 * time.Minute
 	requeueAfterError   = time.Minute
 	typeAvailable       = "Available"
@@ -60,15 +53,15 @@ const (
 // Active Directory constants
 const (
 	ActiveDirectory     = "activedirectory"
-	ActiveDirectoryGUID = "objectGUID"
 	ActiveDirectoryDN   = "distinguishedName"
+	ActiveDirectoryGUID = "objectGUID"
 )
 
 // OpenLDAP constants
 const (
 	OpenLDAP     = "openldap"
-	OpenLDAPGUID = "entryUUID"
 	OpenLDAPDN   = "entryDN"
+	OpenLDAPGUID = "entryUUID"
 )
 
 var Finalizer = fmt.Sprintf("%s/finalizer", klapv1alpha1.GroupVersion.Group)
@@ -83,6 +76,7 @@ type EntryReconciler struct {
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/finalizers,verbs=update
+// +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=servers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
@@ -94,7 +88,7 @@ type EntryReconciler struct {
 func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var (
 		cli    ldap.Client
-		entry  klapv1alpha1.Entry
+		entry  = &klapv1alpha1.Entry{}
 		tlsCfg = &tls.Config{}
 		log    = logf.FromContext(ctx)
 		opts   = []ldap.DialOpt{}
@@ -107,40 +101,38 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		tlsCfg.RootCAs = cacert
 	}
 
-	if err := r.Get(ctx, req.NamespacedName, &entry); err != nil {
+	if err := r.Get(ctx, req.NamespacedName, entry); err != nil {
 		if apierrs.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
-	if entry.DeletionTimestamp != nil && !entry.Spec.Prune && controllerutil.RemoveFinalizer(&entry, Finalizer) {
-		if err := r.Update(ctx, &entry); err != nil {
+	if entry.DeletionTimestamp != nil && !entry.Spec.Prune && controllerutil.RemoveFinalizer(entry, Finalizer) {
+		if err := r.Update(ctx, entry); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
 
-	serverConfig, err := r.getServerConfig(ctx, &entry)
+	server, err := r.getServer(ctx, entry)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
+		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
-	if entry.Spec.TlsSecretRef.Name != nil {
-		tlsConfig, err := r.getTlsConfig(ctx, &entry)
+	if server.Spec.TlsSecretRef.Name != nil {
+		cacert, err := r.getCACert(ctx, server)
 		if err != nil {
-			return r.setStatusUnavailable(ctx, &entry, err)
+			return r.setStatusUnavailable(ctx, entry, err)
 		}
-		if _, ok := tlsConfig.Data[CACertName]; ok {
-			tlsCfg.RootCAs.AppendCertsFromPEM(tlsConfig.Data[CACertName])
-		}
+		tlsCfg.RootCAs.AppendCertsFromPEM(cacert)
 	}
 
-	serverUrl, err := url.Parse(string(serverConfig.Data[Url]))
+	serverUrl, err := url.Parse(*server.Spec.Url)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
+		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
 	tlsCfg.ServerName = serverUrl.Hostname()
@@ -152,27 +144,25 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	cli, err = ldap.DialURL(serverUrl.String(), opts...)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
+		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
-	if raw, ok := serverConfig.Data[StartTLS]; ok && serverUrl.Scheme == "ldap" {
-		if startTls, _ := strconv.ParseBool(string(raw)); startTls {
-			if err = cli.StartTLS(tlsCfg); err != nil {
-				return r.setStatusUnavailable(ctx, &entry, err)
-			}
+	if *server.Spec.StartTLS && serverUrl.Scheme == "ldap" {
+		if err = cli.StartTLS(tlsCfg); err != nil {
+			return r.setStatusUnavailable(ctx, entry, err)
 		}
 	}
 
-	bindDN, err := ldap.ParseDN(string(serverConfig.Data[BindDN]))
+	password, err := r.getPassword(ctx, server)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
+		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
-	err = cli.Bind(bindDN.String(), string(serverConfig.Data[Password]))
+	err = cli.Bind(*server.Spec.BindDN, password)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
+		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
 	defer func() {
@@ -187,11 +177,11 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 		err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{}))
 		if err != nil {
-			return r.setStatusUnavailable(ctx, &entry, err)
+			return r.setStatusUnavailable(ctx, entry, err)
 		}
 
-		if controllerutil.RemoveFinalizer(&entry, Finalizer) {
-			if err := r.Update(ctx, &entry); err != nil {
+		if controllerutil.RemoveFinalizer(entry, Finalizer) {
+			if err := r.Update(ctx, entry); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -202,71 +192,92 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	}
 
-	baseDN, err := ldap.ParseDN(string(serverConfig.Data[BaseDN]))
-
-	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
-	}
-
 	if entry.Status.GUID != nil {
-		err = r.updateEntry(cli, &entry, baseDN.String())
+		err = r.updateEntry(cli, entry, server)
 	} else {
-		err = r.addEntry(cli, &entry, baseDN.String())
+		err = r.addEntry(cli, entry, server)
 	}
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, &entry, err)
+		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
-	return r.setStatusAvailable(ctx, &entry)
+	return r.setStatusAvailable(ctx, entry)
 }
 
-// getServerConfig retrieves the server configuration secret referenced by the Entry.
-func (r *EntryReconciler) getServerConfig(ctx context.Context, entry *klapv1alpha1.Entry) (*corev1.Secret, error) {
+// getServer retrieves the server configuration secret referenced by the Entry.
+func (r *EntryReconciler) getServer(ctx context.Context, entry *klapv1alpha1.Entry) (*klapv1alpha1.Server, error) {
+	var (
+		server = &klapv1alpha1.Server{}
+		ref    = &types.NamespacedName{
+			Name:      *entry.Spec.ServerRef.Name,
+			Namespace: *entry.Spec.ServerRef.Namespace,
+		}
+	)
+	err := r.Get(ctx, *ref, server)
+	if err != nil {
+		return nil, err
+	}
+	return server, nil
+}
+
+// getCACert retrieves the TLS certs bundle referenced by the Server.
+func (r *EntryReconciler) getCACert(ctx context.Context, server *klapv1alpha1.Server) ([]byte, error) {
 	var (
 		secret = &corev1.Secret{}
 		ref    = &types.NamespacedName{
-			Name:      *entry.Spec.ServerSecretRef.Name,
-			Namespace: *entry.Spec.ServerSecretRef.Namespace,
+			Name:      *server.Spec.TlsSecretRef.Name,
+			Namespace: *server.Spec.TlsSecretRef.Namespace,
 		}
 	)
 	err := r.Get(ctx, *ref, secret)
 	if err != nil {
 		return nil, err
 	}
-	return secret, nil
+	if cacert, ok := secret.Data[*server.Spec.TlsSecretRef.Key]; ok {
+		return cacert, nil
+	}
+	return nil, fmt.Errorf("%s key not found in secret %s", *server.Spec.TlsSecretRef.Key, ref.Name)
 }
 
-// getTlsConfig retrieves the TLS configuration secret referenced by the Entry.
-func (r *EntryReconciler) getTlsConfig(ctx context.Context, entry *klapv1alpha1.Entry) (*corev1.Secret, error) {
+// getPassword retrieves the password secret referenced by the Server.
+func (r *EntryReconciler) getPassword(ctx context.Context, server *klapv1alpha1.Server) (string, error) {
 	var (
 		secret = &corev1.Secret{}
 		ref    = &types.NamespacedName{
-			Name:      *entry.Spec.TlsSecretRef.Name,
-			Namespace: *entry.Spec.TlsSecretRef.Namespace,
+			Name:      *server.Spec.PasswordSecretRef.Name,
+			Namespace: *server.Spec.PasswordSecretRef.Namespace,
 		}
 	)
 	err := r.Get(ctx, *ref, secret)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return secret, nil
+	if password, ok := secret.Data[*server.Spec.PasswordSecretRef.Key]; ok {
+		return string(password), nil
+	}
+	return "", fmt.Errorf("%s key not found in secret %s", *server.Spec.PasswordSecretRef.Key, ref.Name)
 }
 
 // addEntry adds a new LDAP entry based on the provided Entry specification.
-func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN string) error {
+func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, server *klapv1alpha1.Server) error {
 	var (
 		add    = ldap.NewAddRequest(*entry.Spec.DN, []ldap.Control{})
 		search = ldap.NewSearchRequest(
-			baseDN,
+			*server.Spec.BaseDN,
 			ldap.ScopeWholeSubtree,
 			ldap.NeverDerefAliases,
 			0, 0, false,
-			fmt.Sprintf("(|(%[2]s=%[1]s)(%[3]s=%[1]s))", *entry.Spec.DN, OpenLDAPDN, ActiveDirectoryDN),
-			[]string{OpenLDAPGUID, ActiveDirectoryGUID},
+			fmt.Sprintf("(%s=%s)", OpenLDAPDN, *entry.Spec.DN),
+			[]string{OpenLDAPGUID},
 			nil,
 		)
 	)
+
+	if *server.Spec.Implementation == ActiveDirectory {
+		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryDN, *entry.Spec.DN)
+		search.Attributes = []string{ActiveDirectoryGUID}
+	}
 
 	for k, v := range entry.Spec.Attributes {
 		add.Attributes = append(add.Attributes, ldap.Attribute{
@@ -284,28 +295,25 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, b
 	if searchResult, err := cli.Search(search); err != nil {
 		return err
 	} else {
-		entryUUID := searchResult.Entries[0].GetAttributeValue(OpenLDAPGUID)
-		implementation := OpenLDAP
-		if entryUUID == "" {
-			entryUUID = searchResult.Entries[0].GetAttributeValue(ActiveDirectoryGUID)
-			implementation = ActiveDirectory
+		guid := searchResult.Entries[0].GetAttributeValue(OpenLDAPGUID)
+		if *server.Spec.Implementation == ActiveDirectory {
+			guid = searchResult.Entries[0].GetAttributeValue(ActiveDirectoryGUID)
 		}
-		if entryUUID == "" {
+		if guid == "" {
 			return fmt.Errorf("unable to retrieve entry GUID")
 		}
-		entry.Status.GUID = &entryUUID
-		entry.Status.Implementation = &implementation
+		entry.Status.GUID = &guid
 	}
 
 	return nil
 }
 
 // updateEntry updates an existing LDAP entry based on the provided Entry specification.
-func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry, baseDN string) error {
+func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry, server *klapv1alpha1.Server) error {
 	var (
 		modify = ldap.NewModifyRequest(*entry.Spec.DN, []ldap.Control{})
 		search = ldap.NewSearchRequest(
-			baseDN,
+			*server.Spec.BaseDN,
 			ldap.ScopeWholeSubtree,
 			ldap.NeverDerefAliases,
 			0, 0, false,
@@ -315,7 +323,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 		)
 	)
 
-	if entry.Status.Implementation != nil && *entry.Status.Implementation == ActiveDirectory {
+	if *server.Spec.Implementation == ActiveDirectory {
 		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryGUID, *entry.Status.GUID)
 	}
 
@@ -324,9 +332,9 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 	} else {
 
 		if len(searchResult.Entries) == 0 {
-			entryUUID := *entry.Status.GUID
+			guid := *entry.Status.GUID
 			entry.Status.GUID = nil
-			return fmt.Errorf("entry %s not found", entryUUID)
+			return fmt.Errorf("entry %s not found", guid)
 		}
 
 		current := searchResult.Entries[0]
@@ -370,10 +378,6 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 		if entry.Spec.Force {
 			for _, attr := range current.Attributes {
 
-				// unicodePwd is a special case in Active Directory that cannot be returned by an LDAP search
-				if attr.Name == "unicodePwd" {
-					continue
-				}
 				// Skip the RDN attribute computed from the DN
 				if attr.Name == dn.RDNs[0].Attributes[0].Type {
 					continue
@@ -399,11 +403,11 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
 		Type:               typeAvailable,
 		Status:             metav1.ConditionTrue,
-		Reason:             "Synchronized",
-		Message:            "Entry is synchronized with the remote server",
+		Reason:             "ReconciledSuccessfully",
+		Message:            "Entry is reconciled successfully",
 		ObservedGeneration: entry.Generation,
 	}) {
-		r.Recorder.Eventf(entry, "Normal", "Success", "entry %s reconciled", *entry.Spec.DN)
+		r.Recorder.Eventf(entry, "Normal", "Success", "entry %s is available", *entry.Spec.DN)
 		if err := r.Status().Update(ctx, entry); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -417,11 +421,20 @@ func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv
 
 	r.Recorder.Event(entry, "Warning", "Error", err.Error())
 
+	status := metav1.ConditionFalse
+
+	if entry.Status.GUID != nil {
+		// If the entry has a GUID, it means it was previously created.
+		// In this case, we set the status to Unknown to indicate that
+		// the current state is uncertain due to the error.
+		status = metav1.ConditionUnknown
+	}
+
 	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
 		Type:               typeAvailable,
-		Status:             metav1.ConditionFalse,
-		Reason:             "Unsynchronized",
-		Message:            "Entry is not synchronized with the remote server",
+		Status:             status,
+		Reason:             "ErrorOccurred",
+		Message:            err.Error(),
 		ObservedGeneration: entry.Generation,
 	}) {
 		if err := r.Status().Update(ctx, entry); err != nil {

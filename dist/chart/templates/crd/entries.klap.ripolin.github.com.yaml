@@ -68,25 +68,13 @@ spec:
                                 description: Prune indicates if entry should be delete or not
                                 type: boolean
                             serverSecretRef:
-                                description: ServerSecretRef pinpoint a secret containing LDAP server configuration
+                                description: ServerRef is a reference to a server configuration
                                 properties:
                                     name:
-                                        description: Name of a secret
+                                        description: Name of a resource
                                         type: string
                                     namespace:
-                                        description: Namespace of a secret
-                                        type: string
-                                required:
-                                    - name
-                                type: object
-                            tlsSecretRef:
-                                description: TlsSecretRef pinpoint a secret containing TLS configuration
-                                properties:
-                                    name:
-                                        description: Name of a secret
-                                        type: string
-                                    namespace:
-                                        description: Namespace of a secret
+                                        description: Namespace of a resource
                                         type: string
                                 required:
                                     - name
@@ -168,8 +156,8 @@ spec:
                                 x-kubernetes-list-map-keys:
                                     - type
                                 x-kubernetes-list-type: map
-                            entryUUID:
-                                description: EntryUUID of the remote entry.
+                            guid:
+                                description: GUID is the global unique identifier of the remote entry.
                                 type: string
                         type: object
                 required:

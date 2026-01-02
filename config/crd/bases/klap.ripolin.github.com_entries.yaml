@@ -69,27 +69,14 @@ spec:
                 default: true
                 description: Prune indicates if entry should be delete or not
                 type: boolean
-              serverSecretRef:
-                description: ServerSecretRef pinpoint a secret containing LDAP server
-                  configuration
+              serverRef:
+                description: ServerRef is a reference to a server configuration
                 properties:
                   name:
-                    description: Name of a secret
+                    description: Name of a resource
                     type: string
                   namespace:
-                    description: Namespace of a secret
-                    type: string
-                required:
-                - name
-                type: object
-              tlsSecretRef:
-                description: TlsSecretRef pinpoint a secret containing TLS configuration
-                properties:
-                  name:
-                    description: Name of a secret
-                    type: string
-                  namespace:
-                    description: Namespace of a secret
+                    description: Namespace of a resource
                     type: string
                 required:
                 - name
@@ -98,7 +85,7 @@ spec:
             - dn
             - force
             - prune
-            - serverSecretRef
+            - serverRef
             type: object
           status:
             description: status defines the observed state of Entry
@@ -174,10 +161,6 @@ spec:
                 x-kubernetes-list-type: map
               guid:
                 description: GUID is the global unique identifier of the remote entry.
-                type: string
-              implementation:
-                description: Implementation indicates the LDAP server implementation
-                  where the entry is stored.
                 type: string
             type: object
         required:

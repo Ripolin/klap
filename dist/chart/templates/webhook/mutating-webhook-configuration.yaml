@@ -27,3 +27,23 @@ webhooks:
           resources:
             - entries
       sideEffects: None
+    - admissionReviewVersions:
+        - v1
+      clientConfig:
+        service:
+            name: klap-webhook-service
+            namespace: {{ .Release.Namespace }}
+            path: /mutate-klap-ripolin-github-com-v1alpha1-server
+      failurePolicy: Fail
+      name: mserver-v1alpha1.kb.io
+      rules:
+        - apiGroups:
+            - klap.ripolin.github.com
+          apiVersions:
+            - v1alpha1
+          operations:
+            - CREATE
+            - UPDATE
+          resources:
+            - servers
+      sideEffects: None

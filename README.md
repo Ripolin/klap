@@ -1,244 +1,147 @@
 # 👏 klap
 ![WIP](https://img.shields.io/badge/status-WIP-orange)
 
-Status: Work in progress — This project is under active development.
+Kubernetes operator to declaratively manage LDAP directory entries.
 
-## Description
-`klap` is a Kubernetes operator that declaratively manages LDAP directory entries using a custom resource (`Entry`). It synchronizes the desired state defined in Kubernetes with a remote LDAP server: creating and updating entries, optionally pruning them on deletion, and recording the remote `GUID` in status. The operator supports TLS (including custom CA bundles), StartTLS, and enforces DN validation and sensible defaults via webhooks.
+Status: Work in progress
 
-## Getting Started
+## Overview
+`klap` synchronizes Kubernetes custom resources with remote LDAP directories. It provides two primary CRDs:
 
-### Prerequisites
-- Go version v1.25.5+ (see `go.mod`)
-- Docker (or another container runtime) installed for image builds
-- `kubectl` compatible with your cluster (recommended v1.25+)
-- Access to a Kubernetes cluster with support for CRDs and webhooks (v1.25+ recommended)
+- `Entry` — declares a single LDAP directory entry to be created/updated/optionally pruned.
+- `Server` — centralizes LDAP server connection and TLS configuration so many `Entry` resources can reference one server.
 
-### To Deploy on the cluster
+The operator supports TLS (including custom CA bundles), StartTLS, DN validation via webhooks, and records remote identifiers in resource status.
 
-This document explains how to install and use the `klap` Kubernetes operator to manage LDAP entries using the `Entry` custom resource.
+## Quick start
 
-**Quick links**
-- CRD sample: [config/samples/klap_v1alpha1_entry.yaml](config/samples/klap_v1alpha1_entry.yaml)
-- API: [api/v1alpha1/entry_types.go](api/v1alpha1/entry_types.go)
+Prerequisites:
+- Go (see `go.mod`)
+- Docker (or other container runtime)
+- `kubectl` and a Kubernetes cluster (webhooks require a cluster that supports admission webhooks)
 
-### Overview
-
-The `klap` operator synchronizes LDAP entries from Kubernetes `Entry` custom resources to a remote LDAP server. It can create, update and (optionally) delete entries on the LDAP server.
-
-Key behavior:
-- On create/update the operator will add or modify the remote LDAP entry to match the `Entry` spec.
-- On delete the operator will remove the remote entry only if `spec.prune` is true.
-- A validating + mutating webhook provides defaults and validates the `Entry` resource (DN validation + finalizer and secret namespace defaults).
-
-### Requirements
-
-- Kubernetes cluster (the project was scaffolded with kubebuilder; use a modern cluster for webhooks — v1.25+ recommended).
-- `kubectl`, `make`, and a container runtime (Docker or alternative) for building and pushing images.
-
-### Installation
-
-Build and push the operator image (set `IMG`):
-
-```sh
-make docker-build docker-push IMG=<registry>/klap:tag
-```
-
-Install the CRDs:
+Install CRDs and deploy (example using Makefile targets):
 
 ```sh
 make install
-```
-
-Deploy the manager (controller + webhooks) using your published image:
-
-```sh
+make docker-build docker-push IMG=<registry>/klap:tag
 make deploy IMG=<registry>/klap:tag
 ```
 
-To uninstall:
+Uninstall / cleanup:
 
 ```sh
 make undeploy
 make uninstall
 ```
 
-You can also use the generated installer bundle in `dist/install.yaml`.
+## CRDs
 
-### About the `Entry` CRD
-
+### Entry
 Resource: `apiVersion: klap.ripolin.github.com/v1alpha1`, `kind: Entry`.
 
-Purpose: declare a single LDAP directory entry to be managed by the operator.
+Purpose: declare an LDAP entry to manage.
 
-Top-level fields (summary):
+Key fields:
+- `spec.dn` (string) — distinguished name for the entry (validated by webhook).
+- `spec.prune` (bool, default: true) — delete remote entry when resource is deleted.
+- `spec.force` (bool, default: false) — allow forcing destructive changes.
+- `spec.attributes` (map[string][]string) — attributes to reconcile.
+- `spec.serverRef` (ResourceRef) — reference to a `Server` resource.
 
-- `spec.dn` (string, required): the LDAP Distinguished Name for the entry. The webhook validates DN syntax.
-- `spec.prune` (bool, default: true): when true the operator will delete the remote LDAP entry when the `Entry` resource is deleted.
-- `spec.force` (bool, default: false): when true the operator will force modifications to the remote entry even if they may lead to data loss (for example overriding or removing attributes). Use with caution.
-- `spec.attributes` (map[string][]string, optional): attributes reconciled on each update. Keys are LDAP attribute names; values are lists of strings.
-- `spec.serverSecretRef` (SecretRef, required): reference to a `Secret` containing LDAP server connection details (see below). The webhook defaults the `namespace` to the Entry's namespace when omitted.
-- `spec.tlsSecretRef` (SecretRef, optional): reference to a `Secret` containing TLS CA material (`ca.crt`). Like `spec.serverSecretRef`, the webhook defaults the `namespace` to the Entry's namespace when omitted.
+Status highlights:
+- `status.guid` — remote entry unique identifier (e.g., `entryUUID` or `objectGUID`).
 
-
-`SecretRef` structure:
-
-- `name` (string, required)
-- `namespace` (string, optional)
-
-Status and metadata:
-
-- `status.guid` (string): the remote LDAP Global Unique IDentifier recorded after successful creation/search. This value is sourced from the LDAP server and may be called `entryUUID` (OpenLDAP) or `objectGUID` (Active Directory).
-- `status.implementation` (string): the detected LDAP implementation where the entry was found. Possible values: `openldap` or `activedirectory`.
-- `status.conditions`: standard Kubernetes conditions are used (e.g., `Available` = True/False) to indicate synchronization state.
-- A finalizer `klap.ripolin.github.com/finalizer` is added by the defaulter to ensure prune behavior is executed before Kubernetes removes the resource.
-
-Example `Entry` resource (concise):
+Example `Entry` (concise):
 
 ```yaml
 apiVersion: klap.ripolin.github.com/v1alpha1
 kind: Entry
 metadata:
-    name: example-entry
-    namespace: default
+  name: example-entry
+  namespace: default
 spec:
-    dn: cn=joe,dc=example,dc=org
-    prune: true
-    attributes:
-        objectClass:
-            - inetOrgPerson
-        sn:
-            - Doe
-        description:
-            - "Imported by klap"
-    serverSecretRef:
-        name: ldap-server
-        namespace: default
-    tlsSecretRef:
-        name: ldap-tls
-        namespace: default
-```
-
-Controller behavior summary:
-
-- On create: the operator attempts to add the entry to the remote LDAP server. If the entry already exists the controller will search the directory and record the remote identifier in `status.guid` and set `status.implementation` to either `openldap` or `activedirectory` depending on which attribute was present.
-- On update: if `status.guid` exists the operator will locate the remote entry by that identifier (using the attribute appropriate to `status.implementation`) and reconcile attributes from the `spec`.
-
-Important: Do not set operational attributes (for example: createTimestamp, modifyTimestamp, entryUUID) in `attributes`. These attributes are managed by the LDAP server and may be rejected, ignored or overwritten. Use non-operational attributes (for example `description`, `location`, `title`) for initial metadata.
-
-#### Server secret expected keys
-
-`spec.serverSecretRef` must reference a `v1` Secret containing the following keys in `data` or `stringData` (all values are strings):
-
-- `url` — LDAP URL, e.g. `ldap://ldap.example.svc:389` or `ldaps://ldap.example.svc:636`.
-- `bind_dn` — Bind DN used to authenticate to the LDAP server.
-- `password` — Password for the `bind_dn`.
-- `base_dn` — Base DN to use when searching for entries.
-- `start_tls` — Optional boolean as string (`"true"` or `"false"`). If present and the server URL scheme is `ldap`, `start_tls` will trigger StartTLS.
-
-Example server secret (stringData form for readability):
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
+  dn: cn=joe,dc=example,dc=org
+  prune: true
+  attributes:
+    objectClass:
+      - inetOrgPerson
+    sn:
+      - Doe
+  serverRef:
     name: ldap-server
     namespace: default
-type: Opaque
-stringData:
-    url: ldap://ldap.openldap.svc:389
-    bind_dn: cn=admin,dc=example,dc=org
-    password: supersecret
-    base_dn: dc=example,dc=org
-    start_tls: "false"
 ```
 
-#### TLS secret expected keys
+### Server
+Resource: `apiVersion: klap.ripolin.github.com/v1alpha1`, `kind: Server`.
 
-If `spec.tlsSecretRef` is provided, the referenced secret should include a PEM-encoded CA certificate under the key `ca.crt` (the controller will append those certs to the TLS root pool).
+Purpose: store LDAP connection configuration and TLS references for reuse by `Entry` resources.
 
-Example TLS secret:
+Key fields:
+- `spec.url` (string) — LDAP URL, e.g. `ldap://ldap.svc:389` or `ldaps://ldap.svc:636`.
+- `spec.baseDN` (string) — base DN for searches.
+- `spec.bindDN` (string) — bind DN used to authenticate.
+- `spec.passwordSecretRef` (ResourceRef) — Secret reference containing the bind password.
+- `spec.implementation` (enum: `openldap`|`activedirectory`, default: `openldap`).
+- `spec.tlsSecretRef` (ResourceRef, optional) — Secret reference with `ca.crt` to trust custom CAs.
+- `spec.startTLS` (bool, default: false) — enable StartTLS for plain `ldap://` URLs.
 
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-    name: ldap-tls
-    namespace: default
-type: Opaque
-data:
-    ca.crt: |+ # base64-encoded PEM content (example placeholder)
-        LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg==
-```
-
-### Example `Entry` resource
-
-See the sample under [config/samples/klap_v1alpha1_entry.yaml](config/samples/klap_v1alpha1_entry.yaml).
-
-A minimal example with server/tls references:
+Example `Server`:
 
 ```yaml
 apiVersion: klap.ripolin.github.com/v1alpha1
-kind: Entry
+kind: Server
 metadata:
-    name: example-entry
-    namespace: default
+  name: ldap-server
+  namespace: default
 spec:
-    dn: cn=joe,dc=example,dc=org
-    prune: true
-    force: false
-    attributes:
-        objectClass:
-            - inetOrgPerson
-        sn:
-            - Doe
-    serverSecretRef:
-        name: ldap-server
-        namespace: default
-    tlsSecretRef:
-        name: ldap-tls
-        namespace: default
+  url: ldap://ldap.openldap.svc:389
+  baseDN: dc=example,dc=org
+  bindDN: cn=admin,dc=example,dc=org
+  passwordSecretRef:
+    name: ldap-server-password
+    namespace: default
+  implementation: openldap
+  startTLS: false
+  tlsSecretRef:
+    name: ldap-tls
+    namespace: default
 ```
 
-Behavior notes:
-- If an `Entry` is created and the remote entry does not exist, the operator will create it and populate `status.guid` with the remote identifier and set `status.implementation` to the detected server type.
-- If `status.guid` is set the operator will attempt to update the corresponding LDAP entry (matching by the implementation-specific attribute: `entryUUID` for OpenLDAP, `objectGUID` for Active Directory).
-- If the `Entry` is deleted and `spec.prune` is true, the operator will delete the remote LDAP entry.
+## Secrets
 
-### Webhooks and defaults
+By default, TLS Secret (when using `tlsSecretRef`) should include `ca.crt` key containing PEM-encoded CA certificates and server password Secret should include `password` key.
 
-The operator registers both a mutating (defaulter) and validating webhook for `Entry`:
-- The defaulter adds a finalizer (`klap.ripolin.github.com/finalizer`) on new `Entry` objects and will default `serverSecretRef.namespace` and `tlsSecretRef.namespace` to the resource namespace when omitted.
-- The validator checks that `spec.dn` is a syntactically valid LDAP DN.
+If necessary, secret key could be changed to pinpoint another exiting key.
 
-Note: webhooks require the manager to be deployed with webhook configuration (this is handled by `make deploy` which applies the `config/webhook` kustomize manifests).
+Example:
 
-### RBAC
-
-The controller requires permission to read secrets and manage `entries` resources. The repository includes RBAC manifests under `config/rbac/` that will be applied by the installer.
-
-### Observability & troubleshooting
-
-- Check `Entry` status and events:
-### Development / Testing
-
-Run the sample locally (kind/minikube) with the default make targets:
-
-```sh
-# install CRDs
-make install
-# build and deploy controller (use local registry or update IMG)
-make docker-build docker-push IMG=<registry>/klap:dev
-make deploy IMG=<registry>/klap:dev
-# apply example
-kubectl apply -k config/samples/
+```yaml
+apiVersion: klap.ripolin.github.com/v1alpha1
+kind: Server
+metadata:
+  name: ldap-server
+  namespace: default
+spec:
+  ...
+  tlsSecretRef:
+    name: ldap-tls
+    namespace: default
+    key: myBundle
 ```
 
-### Next steps / Recommendations
+## Samples
 
-- Add a documented example `Secret` in `config/samples/` that contains realistic keys and values (redact sensitive values).
-- Consider publishing documentation as a site (mkdocs or GitHub Pages).
+See `config/samples/` for example `Entry` manifests. Consider adding a `Server` sample there to simplify getting started.
+
+## Development
+
+Run controller locally with webhooks (recommended via `make` targets). Tests and webhooks are under `internal/`.
+
+## Contributing
+
+Issues and pull requests welcome. Follow project conventions in `PROJECT` and existing module structure.
 
 ---
-Generated from source: [PROJECT](PROJECT), [api/v1alpha1/entry_types.go](api/v1alpha1/entry_types.go), [internal/controller/entry_controller.go](internal/controller/entry_controller.go), and webhook defaults in [internal/webhook/v1alpha1/entry_webhook.go](internal/webhook/v1alpha1/entry_webhook.go).
-
+Generated from source: PROJECT and API types under `api/v1alpha1`.

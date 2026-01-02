@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/klap.ripolin.github.com_entries.yaml
+- bases/klap.ripolin.github.com_servers.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
