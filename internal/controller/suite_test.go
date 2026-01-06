@@ -27,6 +27,7 @@ import (
 
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -45,6 +46,7 @@ var (
 	testEnv   *envtest.Environment
 	cfg       *rest.Config
 	k8sClient client.Client
+	recorder  record.EventRecorder
 )
 
 func TestControllers(t *testing.T) {
@@ -83,6 +85,9 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+
+	recorder = record.NewFakeRecorder(5)
+	Expect(recorder).NotTo(BeNil())
 })
 
 var _ = AfterSuite(func() {

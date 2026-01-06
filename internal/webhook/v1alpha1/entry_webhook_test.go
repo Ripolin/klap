@@ -22,6 +22,8 @@ import (
 
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
 	// TODO (user): Add any additional imports if needed
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var _ = Describe("Entry Webhook", func() {
@@ -59,6 +61,20 @@ var _ = Describe("Entry Webhook", func() {
 		//     By("checking that the default values are set")
 		//     Expect(obj.SomeFieldWithDefault).To(Equal("default_value"))
 		// })
+		It("Should apply defaults when a required field is empty", func() {
+			By("simulating a scenario where defaults should be applied")
+			obj.ObjectMeta = metav1.ObjectMeta{
+				Name:      "test-entry",
+				Namespace: "default",
+			}
+			serverName := "my-server"
+			obj.Spec.ServerRef.Name = &serverName
+			By("calling the Default method to apply defaults")
+			defaulter.Default(ctx, obj)
+			By("checking that the default values are set")
+			Expect(*obj.Spec.ServerRef.Namespace).To(Equal(obj.Namespace))
+			Expect(len(obj.Finalizers)).To(Equal(1))
+		})
 	})
 
 	Context("When creating or updating Entry under Validating Webhook", func() {
@@ -82,6 +98,22 @@ var _ = Describe("Entry Webhook", func() {
 		//     obj.SomeRequiredField = "updated_value"
 		//     Expect(validator.ValidateUpdate(ctx, oldObj, obj)).To(BeNil())
 		// })
+		It("Should deny creation if a required field is not well formated", func() {
+			By("simulating an invalid creation scenario")
+			dn := "foobar"
+			obj.Spec = klapv1alpha1.EntrySpec{
+				DN: &dn,
+			}
+			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
+		})
+		It("Should validate creates/updates correctly", func() {
+			By("simulating a valid update scenario")
+			dn := "cn=foobar"
+			obj.Spec = klapv1alpha1.EntrySpec{
+				DN: &dn,
+			}
+			Expect(validator.ValidateUpdate(ctx, oldObj, obj)).To(BeNil())
+		})
 	})
 
 })

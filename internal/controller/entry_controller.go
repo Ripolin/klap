@@ -69,8 +69,9 @@ var Finalizer = fmt.Sprintf("%s/finalizer", klapv1alpha1.GroupVersion.Group)
 // EntryReconciler reconciles a Entry object
 type EntryReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	ldapClient ldap.Client
+	Scheme     *runtime.Scheme
+	Recorder   record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries,verbs=get;list;watch;create;update;patch;delete
@@ -141,7 +142,12 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		opts = append(opts, ldap.DialWithTLSConfig(tlsCfg))
 	}
 
-	cli, err = ldap.DialURL(serverUrl.String(), opts...)
+	if r.ldapClient == nil {
+		cli, err = ldap.DialURL(serverUrl.String(), opts...)
+	} else {
+		// For unit tests only !!!
+		cli = r.ldapClient
+	}
 
 	if err != nil {
 		return r.setStatusUnavailable(ctx, entry, err)

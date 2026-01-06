@@ -82,6 +82,7 @@ spec:
                 - name
                 type: object
             required:
+            - attributes
             - dn
             - force
             - prune

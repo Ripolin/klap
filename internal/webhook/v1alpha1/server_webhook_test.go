@@ -22,6 +22,8 @@ import (
 
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
 	// TODO (user): Add any additional imports if needed
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var _ = Describe("Server Webhook", func() {
@@ -46,6 +48,8 @@ var _ = Describe("Server Webhook", func() {
 
 	AfterEach(func() {
 		// TODO (user): Add any teardown logic common to all tests
+		obj = &klapv1alpha1.Server{}
+		oldObj = &klapv1alpha1.Server{}
 	})
 
 	Context("When creating Server under Defaulting Webhook", func() {
@@ -59,6 +63,24 @@ var _ = Describe("Server Webhook", func() {
 		//     By("checking that the default values are set")
 		//     Expect(obj.SomeFieldWithDefault).To(Equal("default_value"))
 		// })
+		It("Should apply defaults when a required field is empty", func() {
+			By("simulating a scenario where defaults should be applied")
+			obj.ObjectMeta = metav1.ObjectMeta{
+				Name:      "test-server",
+				Namespace: "default",
+			}
+			passwdSecretName := "my-password-secret"
+			tlsSecretName := "my-tls-secret"
+			obj.Spec.PasswordSecretRef.Name = &passwdSecretName
+			obj.Spec.TlsSecretRef.Name = &tlsSecretName
+			By("calling the Default method to apply defaults")
+			defaulter.Default(ctx, obj)
+			By("checking that the default values are set")
+			Expect(*obj.Spec.PasswordSecretRef.Namespace).To(Equal(obj.Namespace))
+			Expect(*obj.Spec.PasswordSecretRef.Key).To(Equal("password"))
+			Expect(*obj.Spec.TlsSecretRef.Namespace).To(Equal(obj.Namespace))
+			Expect(*obj.Spec.TlsSecretRef.Key).To(Equal("ca.crt"))
+		})
 	})
 
 	Context("When creating or updating Server under Validating Webhook", func() {
@@ -82,6 +104,30 @@ var _ = Describe("Server Webhook", func() {
 		//     obj.SomeRequiredField = "updated_value"
 		//     Expect(validator.ValidateUpdate(ctx, oldObj, obj)).To(BeNil())
 		// })
+		It("Should deny creation if a required field is not well formated", func() {
+			By("simulating an invalid creation scenario")
+			baseDN := "foo"
+			bindDN := "bar"
+			ldapUrl := "http://my-ldap-server"
+			obj.Spec = klapv1alpha1.ServerSpec{
+				BaseDN: &baseDN,
+				BindDN: &bindDN,
+				Url:    &ldapUrl,
+			}
+			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
+		})
+		It("Should validate creates/updates correctly", func() {
+			By("simulating a valid update scenario")
+			baseDN := "dc=foobar"
+			bindDN := "cn=admin,dc=foobar"
+			ldapUrl := "ldap://my-ldap-server"
+			obj.Spec = klapv1alpha1.ServerSpec{
+				BaseDN: &baseDN,
+				BindDN: &bindDN,
+				Url:    &ldapUrl,
+			}
+			Expect(validator.ValidateUpdate(ctx, oldObj, obj)).To(BeNil())
+		})
 	})
 
 })

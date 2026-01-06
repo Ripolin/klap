@@ -38,7 +38,7 @@ type EntrySpec struct {
 	Force bool `json:"force"`
 
 	// Attributes associated to the entry depends its classes
-	// +optional
+	// +required
 	Attributes map[string][]string `json:"attributes,omitzero"`
 
 	// ServerRef is a reference to a server configuration

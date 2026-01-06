@@ -6,6 +6,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
+	go.uber.org/mock v0.6.0
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
 	k8s.io/client-go v0.34.2
