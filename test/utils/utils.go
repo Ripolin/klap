@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
@@ -78,6 +79,33 @@ func UninstallCertManager() {
 		if _, err := Run(cmd); err != nil {
 			warnError(err)
 		}
+	}
+}
+
+// InstallOpenLDAP installs the openldap bundle.
+func InstallOpenLDAP() error {
+	dir, _ := GetProjectDir()
+	cmd := exec.Command("kubectl", "apply", "-k", path.Join(dir, "config", "openldap"))
+	if _, err := Run(cmd); err != nil {
+		return err
+	}
+	// Wait for openldap to be ready
+	cmd = exec.Command("kubectl", "rollout", "status", "statefulset/openldap",
+		"--namespace=openldap",
+		"--timeout=5m",
+		"--watch",
+	)
+
+	_, err := Run(cmd)
+	return err
+}
+
+// InstallOpenLDAP installs the openldap bundle.
+func UninstallOpenLDAP() {
+	dir, _ := GetProjectDir()
+	cmd := exec.Command("kubectl", "delete", "-k", path.Join(dir, "config", "openldap"))
+	if _, err := Run(cmd); err != nil {
+		warnError(err)
 	}
 }
 

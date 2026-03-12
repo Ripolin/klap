@@ -36,6 +36,7 @@ var (
 	managerImage = "example.com/klap:v0.0.1"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
+	shouldCleanupOpenLDAP = false
 )
 
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
@@ -61,9 +62,11 @@ var _ = BeforeSuite(func() {
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
 
 	setupCertManager()
+	setupOpenLDAP()
 })
 
 var _ = AfterSuite(func() {
+	teardownOpenLDAP()
 	teardownCertManager()
 })
 
@@ -98,4 +101,29 @@ func teardownCertManager() {
 
 	By("uninstalling CertManager")
 	utils.UninstallCertManager()
+}
+
+// setupOpenLDAP installs OpenLDAP if needed for tests that require it.
+func setupOpenLDAP() {
+	if os.Getenv("OPENLDAP_INSTALL_SKIP") == "true" {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping OpenLDAP installation (OPENLDAP_INSTALL_SKIP=true)\n")
+		return
+	}
+
+	// Mark for cleanup before installation to handle interruptions and partial installs.
+	shouldCleanupOpenLDAP = true
+
+	By("installing OpenLDAP")
+	Expect(utils.InstallOpenLDAP()).To(Succeed(), "Failed to install OpenLDAP")
+}
+
+// teardownOpenLDAP uninstalls OpenLDAP if it was installed by setupOpenLDAP.
+func teardownOpenLDAP() {
+	if !shouldCleanupOpenLDAP {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping OpenLDAP cleanup (not installed by this suite)\n")
+		return
+	}
+
+	By("uninstalling OpenLDAP")
+	utils.UninstallOpenLDAP()
 }
