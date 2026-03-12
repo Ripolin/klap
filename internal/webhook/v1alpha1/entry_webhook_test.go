@@ -43,7 +43,6 @@ var _ = Describe("Entry Webhook", func() {
 		Expect(defaulter).NotTo(BeNil(), "Expected defaulter to be initialized")
 		Expect(oldObj).NotTo(BeNil(), "Expected oldObj to be initialized")
 		Expect(obj).NotTo(BeNil(), "Expected obj to be initialized")
-		// TODO (user): Add any setup logic common to all tests
 	})
 
 	AfterEach(func() {
@@ -70,10 +69,11 @@ var _ = Describe("Entry Webhook", func() {
 			serverName := "my-server"
 			obj.Spec.ServerRef.Name = &serverName
 			By("calling the Default method to apply defaults")
-			defaulter.Default(ctx, obj)
+			err := defaulter.Default(ctx, obj)
 			By("checking that the default values are set")
+			Expect(err).ToNot(HaveOccurred())
 			Expect(*obj.Spec.ServerRef.Namespace).To(Equal(obj.Namespace))
-			Expect(len(obj.Finalizers)).To(Equal(1))
+			Expect(obj.Finalizers).To(HaveLen(1))
 		})
 	})
 

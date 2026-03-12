@@ -18,16 +18,13 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
@@ -42,7 +39,7 @@ var entrylog = logf.Log.WithName("entry-resource")
 
 // SetupEntryWebhookWithManager registers the webhook for Entry in the manager.
 func SetupEntryWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(&klapv1alpha1.Entry{}).
+	return ctrl.NewWebhookManagedBy(mgr, &klapv1alpha1.Entry{}).
 		WithValidator(&EntryCustomValidator{}).
 		WithDefaulter(&EntryCustomDefaulter{}).
 		Complete()
@@ -57,23 +54,16 @@ func SetupEntryWebhookWithManager(mgr ctrl.Manager) error {
 // as it is used only for temporary operations and does not need to be deeply copied.
 type EntryCustomDefaulter struct{}
 
-var _ webhook.CustomDefaulter = &EntryCustomDefaulter{}
-
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind Entry.
-func (d *EntryCustomDefaulter) Default(_ context.Context, obj runtime.Object) error {
-	entry, ok := obj.(*klapv1alpha1.Entry)
+func (d *EntryCustomDefaulter) Default(_ context.Context, obj *klapv1alpha1.Entry) error {
+	entrylog.Info("Defaulting for Entry", "name", obj.GetName())
 
-	if !ok {
-		return fmt.Errorf("expected an Entry object but got %T", obj)
-	}
-	entrylog.Info("Defaulting for Entry", "name", entry.GetName())
-
-	if entry.DeletionTimestamp == nil && !controllerutil.ContainsFinalizer(entry, controller.Finalizer) {
-		controllerutil.AddFinalizer(entry, controller.Finalizer)
+	if obj.DeletionTimestamp == nil && !controllerutil.ContainsFinalizer(obj, controller.Finalizer) {
+		controllerutil.AddFinalizer(obj, controller.Finalizer)
 	}
 
-	if entry.Spec.ServerRef.Namespace == nil {
-		entry.Spec.ServerRef.Namespace = &entry.Namespace
+	if obj.Spec.ServerRef.Namespace == nil {
+		obj.Spec.ServerRef.Namespace = &obj.Namespace
 	}
 
 	return nil
@@ -88,37 +78,23 @@ func (d *EntryCustomDefaulter) Default(_ context.Context, obj runtime.Object) er
 // as this struct is used only for temporary operations and does not need to be deeply copied.
 type EntryCustomValidator struct{}
 
-var _ webhook.CustomValidator = &EntryCustomValidator{}
-
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type Entry.
-func (v *EntryCustomValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	entry, ok := obj.(*klapv1alpha1.Entry)
-	if !ok {
-		return nil, fmt.Errorf("expected a Entry object but got %T", obj)
-	}
-	entrylog.Info("Validation for Entry upon creation", "name", entry.GetName())
+func (v *EntryCustomValidator) ValidateCreate(_ context.Context, obj *klapv1alpha1.Entry) (admission.Warnings, error) {
+	entrylog.Info("Validation for Entry upon creation", "name", obj.GetName())
 
-	return nil, validateEntry(entry)
+	return nil, validateEntry(obj)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Entry.
-func (v *EntryCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	entry, ok := newObj.(*klapv1alpha1.Entry)
-	if !ok {
-		return nil, fmt.Errorf("expected a Entry object for the newObj but got %T", newObj)
-	}
-	entrylog.Info("Validation for Entry upon update", "name", entry.GetName())
+func (v *EntryCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *klapv1alpha1.Entry) (admission.Warnings, error) {
+	entrylog.Info("Validation for Entry upon update", "name", newObj.GetName())
 
-	return nil, validateEntry(entry)
+	return nil, validateEntry(newObj)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type Entry.
-func (v *EntryCustomValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	entry, ok := obj.(*klapv1alpha1.Entry)
-	if !ok {
-		return nil, fmt.Errorf("expected a Entry object but got %T", obj)
-	}
-	entrylog.Info("Validation for Entry upon deletion", "name", entry.GetName())
+func (v *EntryCustomValidator) ValidateDelete(_ context.Context, obj *klapv1alpha1.Entry) (admission.Warnings, error) {
+	entrylog.Info("Validation for Entry upon deletion", "name", obj.GetName())
 
 	return nil, nil
 }

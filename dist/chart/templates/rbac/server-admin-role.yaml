@@ -2,21 +2,23 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-    labels:
-        app.kubernetes.io/managed-by: {{ .Release.Service }}
-        app.kubernetes.io/name: klap
-    name: klap-server-admin-role
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: {{ include "klap.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: {{ include "klap.resourceName" (dict "suffix" "server-admin-role" "context" $) }}
 rules:
-    - apiGroups:
-        - klap.ripolin.github.com
-      resources:
-        - servers
-      verbs:
-        - '*'
-    - apiGroups:
-        - klap.ripolin.github.com
-      resources:
-        - servers/status
-      verbs:
-        - get
+- apiGroups:
+  - klap.ripolin.github.com
+  resources:
+  - servers
+  verbs:
+  - '*'
+- apiGroups:
+  - klap.ripolin.github.com
+  resources:
+  - servers/status
+  verbs:
+  - get
 {{- end }}

@@ -18,17 +18,14 @@ package v1alpha1
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"slices"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
@@ -47,7 +44,7 @@ var serverlog = logf.Log.WithName("server-resource")
 
 // SetupServerWebhookWithManager registers the webhook for Server in the manager.
 func SetupServerWebhookWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewWebhookManagedBy(mgr).For(&klapv1alpha1.Server{}).
+	return ctrl.NewWebhookManagedBy(mgr, &klapv1alpha1.Server{}).
 		WithValidator(&ServerCustomValidator{}).
 		WithDefaulter(&ServerCustomDefaulter{}).
 		Complete()
@@ -62,33 +59,26 @@ func SetupServerWebhookWithManager(mgr ctrl.Manager) error {
 // as it is used only for temporary operations and does not need to be deeply copied.
 type ServerCustomDefaulter struct{}
 
-var _ webhook.CustomDefaulter = &ServerCustomDefaulter{}
-
 // Default implements webhook.CustomDefaulter so a webhook will be registered for the Kind Server.
-func (d *ServerCustomDefaulter) Default(_ context.Context, obj runtime.Object) error {
-	server, ok := obj.(*klapv1alpha1.Server)
+func (d *ServerCustomDefaulter) Default(_ context.Context, obj *klapv1alpha1.Server) error {
+	serverlog.Info("Defaulting for Server", "name", obj.GetName())
 
-	if !ok {
-		return fmt.Errorf("expected an Server object but got %T", obj)
-	}
-	serverlog.Info("Defaulting for Server", "name", server.GetName())
-
-	if server.Spec.PasswordSecretRef.Namespace == nil {
-		server.Spec.PasswordSecretRef.Namespace = &server.Namespace
+	if obj.Spec.PasswordSecretRef.Namespace == nil {
+		obj.Spec.PasswordSecretRef.Namespace = &obj.Namespace
 	}
 
-	if server.Spec.PasswordSecretRef.Key == nil {
+	if obj.Spec.PasswordSecretRef.Key == nil {
 		key := Password
-		server.Spec.PasswordSecretRef.Key = &key
+		obj.Spec.PasswordSecretRef.Key = &key
 	}
 
-	if server.Spec.TlsSecretRef.Name != nil {
-		if server.Spec.TlsSecretRef.Namespace == nil {
-			server.Spec.TlsSecretRef.Namespace = &server.Namespace
+	if obj.Spec.TlsSecretRef.Name != nil {
+		if obj.Spec.TlsSecretRef.Namespace == nil {
+			obj.Spec.TlsSecretRef.Namespace = &obj.Namespace
 		}
-		if server.Spec.TlsSecretRef.Key == nil {
+		if obj.Spec.TlsSecretRef.Key == nil {
 			key := CACertName
-			server.Spec.TlsSecretRef.Key = &key
+			obj.Spec.TlsSecretRef.Key = &key
 		}
 	}
 
@@ -105,37 +95,23 @@ func (d *ServerCustomDefaulter) Default(_ context.Context, obj runtime.Object) e
 // as this struct is used only for temporary operations and does not need to be deeply copied.
 type ServerCustomValidator struct{}
 
-var _ webhook.CustomValidator = &ServerCustomValidator{}
-
 // ValidateCreate implements webhook.CustomValidator so a webhook will be registered for the type Server.
-func (v *ServerCustomValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
-	server, ok := obj.(*klapv1alpha1.Server)
-	if !ok {
-		return nil, fmt.Errorf("expected a Server object but got %T", obj)
-	}
-	serverlog.Info("Validation for Server upon creation", "name", server.GetName())
+func (v *ServerCustomValidator) ValidateCreate(_ context.Context, obj *klapv1alpha1.Server) (admission.Warnings, error) {
+	serverlog.Info("Validation for Server upon creation", "name", obj.GetName())
 
-	return nil, validateServer(server)
+	return nil, validateServer(obj)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Server.
-func (v *ServerCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
-	server, ok := newObj.(*klapv1alpha1.Server)
-	if !ok {
-		return nil, fmt.Errorf("expected a Server object for the newObj but got %T", newObj)
-	}
-	serverlog.Info("Validation for Server upon update", "name", server.GetName())
+func (v *ServerCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *klapv1alpha1.Server) (admission.Warnings, error) {
+	serverlog.Info("Validation for Server upon update", "name", newObj.GetName())
 
-	return nil, validateServer(server)
+	return nil, validateServer(newObj)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type Server.
-func (v *ServerCustomValidator) ValidateDelete(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
-	server, ok := obj.(*klapv1alpha1.Server)
-	if !ok {
-		return nil, fmt.Errorf("expected a Server object but got %T", obj)
-	}
-	serverlog.Info("Validation for Server upon deletion", "name", server.GetName())
+func (v *ServerCustomValidator) ValidateDelete(_ context.Context, obj *klapv1alpha1.Server) (admission.Warnings, error) {
+	serverlog.Info("Validation for Server upon deletion", "name", obj.GetName())
 
 	return nil, nil
 }

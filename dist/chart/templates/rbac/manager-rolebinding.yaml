@@ -1,15 +1,17 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-    labels:
-        app.kubernetes.io/managed-by: {{ .Release.Service }}
-        app.kubernetes.io/name: klap
-    name: klap-manager-rolebinding
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: {{ include "klap.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: {{ include "klap.resourceName" (dict "suffix" "manager-rolebinding" "context" $) }}
 roleRef:
-    apiGroup: rbac.authorization.k8s.io
-    kind: ClusterRole
-    name: klap-manager-role
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "klap.resourceName" (dict "suffix" "manager-role" "context" $) }}
 subjects:
-    - kind: ServiceAccount
-      name: klap-controller-manager
-      namespace: {{ .Release.Namespace }}
+- kind: ServiceAccount
+  name: {{ include "klap.resourceName" (dict "suffix" "controller-manager" "context" $) }}
+  namespace: {{ .Release.Namespace }}

@@ -11,7 +11,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: entries.klap.ripolin.github.com
 spec:
   group: klap.ripolin.github.com
@@ -77,7 +77,7 @@ spec:
                 default: true
                 description: Prune indicates if entry should be delete or not
                 type: boolean
-              serverSecretRef:
+              serverRef:
                 description: ServerRef is a reference to a server configuration
                 properties:
                   name:
@@ -90,10 +90,11 @@ spec:
                 - name
                 type: object
             required:
+            - attributes
             - dn
             - force
             - prune
-            - serverSecretRef
+            - serverRef
             type: object
           status:
             description: status defines the observed state of Entry
@@ -183,7 +184,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.19.0
+    controller-gen.kubebuilder.io/version: v0.20.1
   name: servers.klap.ripolin.github.com
 spec:
   group: klap.ripolin.github.com
@@ -194,7 +195,14 @@ spec:
     singular: server
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.url
+      name: URL
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: Server is the Schema for the servers API
@@ -235,14 +243,19 @@ spec:
                 description: PasswordSecretRef is a reference to a secret containing
                   the password to bind with
                 properties:
+                  key:
+                    description: Key within a secret
+                    type: string
                   name:
-                    description: Name of a resource
+                    description: Name of a secret
                     type: string
                   namespace:
-                    description: Namespace of a resource
+                    description: Namespace of a secret
                     type: string
                 required:
+                - key
                 - name
+                - namespace
                 type: object
               startTLS:
                 default: false
@@ -253,14 +266,19 @@ spec:
                 description: TlsSecretRef is a reference to a secret containing TLS
                   configuration for the server
                 properties:
+                  key:
+                    description: Key within a secret
+                    type: string
                   name:
-                    description: Name of a resource
+                    description: Name of a secret
                     type: string
                   namespace:
-                    description: Namespace of a resource
+                    description: Namespace of a secret
                     type: string
                 required:
+                - key
                 - name
+                - namespace
                 type: object
               url:
                 description: Url is the URL of the server
@@ -278,6 +296,7 @@ spec:
         type: object
     served: true
     storage: true
+    subresources: {}
 ---
 apiVersion: v1
 kind: ServiceAccount

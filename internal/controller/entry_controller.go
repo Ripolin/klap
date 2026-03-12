@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -71,21 +71,21 @@ type EntryReconciler struct {
 	client.Client
 	ldapClient ldap.Client
 	Scheme     *runtime.Scheme
-	Recorder   record.EventRecorder
+	Recorder   events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=entries/finalizers,verbs=update
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=servers,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
 // For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
 func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var (
 		cli    ldap.Client
@@ -360,7 +360,6 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 			if err = cli.ModifyDN(moddn); err != nil {
 				return err
 			}
-			r.Recorder.Eventf(entry, "Normal", "Success", "entry DN updated to %s", *entry.Spec.DN)
 		}
 
 		for k, v := range entry.Spec.Attributes {
@@ -413,7 +412,7 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 		Message:            "Entry is reconciled successfully",
 		ObservedGeneration: entry.Generation,
 	}) {
-		r.Recorder.Eventf(entry, "Normal", "Success", "entry %s is available", *entry.Spec.DN)
+		r.Recorder.Eventf(entry, nil, "Normal", "EntryDriftDetection", "Reconcile", "entry %s is available", *entry.Spec.DN)
 		if err := r.Status().Update(ctx, entry); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -425,7 +424,7 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 // setStatusUnavailable updates the Entry status to Unavailable with the provided error message.
 func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) (ctrl.Result, error) {
 
-	r.Recorder.Event(entry, "Warning", "Error", err.Error())
+	r.Recorder.Eventf(entry, nil, "Warning", "EntryDriftDetection", "ErrorOccurs", err.Error())
 
 	status := metav1.ConditionFalse
 

@@ -2,17 +2,19 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-    labels:
-        app.kubernetes.io/managed-by: {{ .Release.Service }}
-        app.kubernetes.io/name: klap
-    name: klap-metrics-certs
-    namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: {{ include "klap.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: {{ include "klap.resourceName" (dict "suffix" "metrics-certs" "context" $) }}
+  namespace: {{ .Release.Namespace }}
 spec:
-    dnsNames:
-        - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc
-        - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc.cluster.local
-    issuerRef:
-        kind: Issuer
-        name: {{ include "chart.name" . }}-selfsigned-issuer
-    secretName: metrics-server-cert
+  dnsNames:
+  - {{ include "klap.resourceName" (dict "suffix" "controller-manager-metrics-service" "context" $) }}.{{ include "klap.namespaceName" $ }}.svc
+  - {{ include "klap.resourceName" (dict "suffix" "controller-manager-metrics-service" "context" $) }}.{{ include "klap.namespaceName" $ }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "klap.resourceName" (dict "suffix" "selfsigned-issuer" "context" $) }}
+  secretName: metrics-server-cert
 {{- end }}

@@ -1,54 +1,54 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-    name: klap-manager-role
+  name: {{ include "klap.resourceName" (dict "suffix" "manager-role" "context" $) }}
 rules:
-    - apiGroups:
-        - ""
-      resources:
-        - events
-      verbs:
-        - create
-        - patch
-    - apiGroups:
-        - ""
-      resources:
-        - secrets
-      verbs:
-        - get
-        - list
-        - watch
-    - apiGroups:
-        - klap.ripolin.github.com
-      resources:
-        - entries
-      verbs:
-        - create
-        - delete
-        - get
-        - list
-        - patch
-        - update
-        - watch
-    - apiGroups:
-        - klap.ripolin.github.com
-      resources:
-        - entries/finalizers
-      verbs:
-        - update
-    - apiGroups:
-        - klap.ripolin.github.com
-      resources:
-        - entries/status
-      verbs:
-        - get
-        - patch
-        - update
-    - apiGroups:
-        - klap.ripolin.github.com
-      resources:
-        - servers
-      verbs:
-        - get
-        - list
-        - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - klap.ripolin.github.com
+  resources:
+  - entries
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - klap.ripolin.github.com
+  resources:
+  - entries/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - klap.ripolin.github.com
+  resources:
+  - entries/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - klap.ripolin.github.com
+  resources:
+  - servers
+  verbs:
+  - get
+  - list
+  - watch

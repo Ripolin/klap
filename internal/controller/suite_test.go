@@ -21,13 +21,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -46,7 +47,7 @@ var (
 	testEnv   *envtest.Environment
 	cfg       *rest.Config
 	k8sClient client.Client
-	recorder  record.EventRecorder
+	recorder  events.EventRecorder
 )
 
 func TestControllers(t *testing.T) {
@@ -86,15 +87,16 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 
-	recorder = record.NewFakeRecorder(5)
+	recorder = events.NewFakeRecorder(5)
 	Expect(recorder).NotTo(BeNil())
 })
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
 	cancel()
-	err := testEnv.Stop()
-	Expect(err).NotTo(HaveOccurred())
+	Eventually(func() error {
+		return testEnv.Stop()
+	}, time.Minute, time.Second).Should(Succeed())
 })
 
 // getFirstFoundEnvTestBinaryDir locates the first binary in the specified path.
