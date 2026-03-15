@@ -19,9 +19,7 @@ spec:
       - joe@example.org
     description:
       - "Imported by klap"
-  serverSecretRef:
-    name: ldap-server
+  serverRef:
+    name: server-sample
     namespace: default
-  tlsSecretRef:
-    name: ldap-tls
-    namespace: default
+  
