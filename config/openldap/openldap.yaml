@@ -57,7 +57,7 @@ spec:
     spec:
       containers:
         - name: openldap
-          image: bitnamilegacy/openldap:2.6.10-debian-12-r4
+          image: ghcr.io/ripolin/openldap:2.6.13
           env:
             - name: BITNAMI_DEBUG
               value: "yes"
