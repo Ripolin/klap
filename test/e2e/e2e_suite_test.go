@@ -33,16 +33,17 @@ import (
 
 var (
 	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/klap:v0.0.1"
+	managerImage = "controller:latest"
 	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
 	shouldCleanupCertManager = false
 	shouldCleanupOpenLDAP = false
 )
 
 // TestE2E runs the e2e test suite to validate the solution in an isolated environment.
-// The default setup requires Kind and CertManager.
+// The default setup requires Kind, CertManager and OpenLDAP.
 //
 // To skip CertManager installation, set: CERT_MANAGER_INSTALL_SKIP=true
+// To skip OpenLDAP installation, set: OPENLDAP_INSTALL_SKIP=true
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting klap e2e test suite\n")
@@ -104,6 +105,7 @@ func teardownCertManager() {
 }
 
 // setupOpenLDAP installs OpenLDAP if needed for tests that require it.
+// Skips installation if OPENLDAP_INSTALL_SKIP=true.
 func setupOpenLDAP() {
 	if os.Getenv("OPENLDAP_INSTALL_SKIP") == "true" {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping OpenLDAP installation (OPENLDAP_INSTALL_SKIP=true)\n")
@@ -118,6 +120,7 @@ func setupOpenLDAP() {
 }
 
 // teardownOpenLDAP uninstalls OpenLDAP if it was installed by setupOpenLDAP.
+// This ensures we only remove what we installed.
 func teardownOpenLDAP() {
 	if !shouldCleanupOpenLDAP {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping OpenLDAP cleanup (not installed by this suite)\n")
