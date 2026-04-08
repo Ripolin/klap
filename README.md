@@ -1,147 +1,166 @@
 # 👏 klap
-![WIP](https://img.shields.io/badge/status-WIP-orange)
 
-Kubernetes operator to declaratively manage LDAP directory entries.
+[![Status](https://img.shields.io/badge/status-WIP-orange)](https://github.com/Ripolin/klap)
+[![Go](https://img.shields.io/badge/Go-1.25-blue?logo=go)](go.mod)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-Status: Work in progress
+**klap** is a Kubernetes operator that declaratively manages LDAP directory entries via custom resources.
 
 ## Overview
-`klap` synchronizes Kubernetes custom resources with remote LDAP directories. It provides two primary CRDs:
 
-- `Entry` — declares a single LDAP directory entry to be created/updated/optionally pruned.
-- `Server` — centralizes LDAP server connection and TLS configuration so many `Entry` resources can reference one server.
+`klap` reconciles Kubernetes custom resources with remote LDAP directories. Define your directory entries as Kubernetes objects and let the operator handle creates, updates and deletes.
 
-The operator supports TLS (including custom CA bundles), StartTLS, DN validation via webhooks, and records remote identifiers in resource status.
+Two CRDs are provided:
+
+| CRD      | Purpose                                            |
+|----------|----------------------------------------------------|
+| `Server` | Centralizes LDAP connection and TLS configuration  |
+| `Entry`  | Declares a single LDAP directory entry to manage   |
+
+**Key features:**
+- Declarative LDAP entry lifecycle (create, update, prune on delete)
+- TLS and StartTLS support with custom CA bundles
+- DN validation via admission webhooks
+- Supports OpenLDAP and Active Directory *(beta)*
+- Remote entry UUID/GUID tracked in resource status
+- Helm chart available as OCI artifact
+
+## Installation
+
+### Prerequisites
+
+- Kubernetes cluster with admission webhook support
+- [cert-manager](https://cert-manager.io/) (required for webhook certificates)
+- Helm 3
+
+### Via Helm (recommended)
+
+```sh
+helm install klap oci://ghcr.io/ripolin/helm/klap --version <version> \
+  --namespace klap-system \
+  --create-namespace
+```
+
+### Via Kustomize
+
+```sh
+kubectl apply -k config/default
+```
 
 ## Quick start
 
-Prerequisites:
-- Go (see `go.mod`)
-- Docker (or other container runtime)
-- `kubectl` and a Kubernetes cluster (webhooks require a cluster that supports admission webhooks)
+### 1. Create a Server
 
-Install CRDs and deploy (example using Makefile targets):
-
-```sh
-make install
-make docker-build docker-push IMG=<registry>/klap:tag
-make deploy IMG=<registry>/klap:tag
+```yaml
+apiVersion: klap.ripolin.github.com/v1alpha1
+kind: Server
+metadata:
+  name: ldap-server
+  namespace: default
+spec:
+  url: ldap://ldap.openldap.svc.cluster.local
+  baseDN: dc=example,dc=org
+  bindDN: cn=admin,dc=example,dc=org
+  passwordSecretRef:
+    name: ldap-passwd
+    namespace: default
+  implementation: openldap  # or activedirectory (beta)
+  startTLS: false
 ```
 
-Uninstall / cleanup:
+### 2. Create the bind password Secret
 
 ```sh
-make undeploy
-make uninstall
+kubectl create secret generic ldap-passwd \
+  --from-literal=password=<your-password>
 ```
 
-## CRDs
-
-### Entry
-Resource: `apiVersion: klap.ripolin.github.com/v1alpha1`, `kind: Entry`.
-
-Purpose: declare an LDAP entry to manage.
-
-Key fields:
-- `spec.dn` (string) — distinguished name for the entry (validated by webhook).
-- `spec.prune` (bool, default: true) — delete remote entry when resource is deleted.
-- `spec.force` (bool, default: false) — allow forcing destructive changes.
-- `spec.attributes` (map[string][]string) — attributes to reconcile.
-- `spec.serverRef` (ResourceRef) — reference to a `Server` resource.
-
-Status highlights:
-- `status.guid` — remote entry unique identifier (e.g., `entryUUID` or `objectGUID`).
-
-Example `Entry` (concise):
+### 3. Declare an Entry
 
 ```yaml
 apiVersion: klap.ripolin.github.com/v1alpha1
 kind: Entry
 metadata:
-  name: example-entry
+  name: joe
   namespace: default
 spec:
   dn: cn=joe,dc=example,dc=org
-  prune: true
+  prune: true       # delete LDAP entry when this resource is deleted
+  force: false      # allow destructive attribute changes
   attributes:
     objectClass:
       - inetOrgPerson
     sn:
       - Doe
+    mail:
+      - joe@example.org
   serverRef:
     name: ldap-server
     namespace: default
 ```
 
+Once applied, `klap` creates or updates the corresponding entry in the LDAP directory. The remote entry UUID is stored in `status.guid`.
+
+## CRD Reference
+
 ### Server
-Resource: `apiVersion: klap.ripolin.github.com/v1alpha1`, `kind: Server`.
 
-Purpose: store LDAP connection configuration and TLS references for reuse by `Entry` resources.
+| Field                    | Type        | Default    | Description                                    |
+|--------------------------|-------------|------------|------------------------------------------------|
+| `spec.url`               | string      | —          | LDAP URL (`ldap://` or `ldaps://`)             |
+| `spec.baseDN`            | string      | —          | Base DN for searches                           |
+| `spec.bindDN`            | string      | —          | Bind DN for authentication                     |
+| `spec.passwordSecretRef` | ResourceRef | —          | Secret containing the `password` key           |
+| `spec.implementation`    | enum        | `openldap` | `openldap` or `activedirectory` *(beta)*       |
+| `spec.tlsSecretRef`      | ResourceRef | —          | Secret with `ca.crt` for custom CA trust       |
+| `spec.startTLS`          | bool        | `false`    | Enable StartTLS on plain `ldap://` connections |
 
-Key fields:
-- `spec.url` (string) — LDAP URL, e.g. `ldap://ldap.svc:389` or `ldaps://ldap.svc:636`.
-- `spec.baseDN` (string) — base DN for searches.
-- `spec.bindDN` (string) — bind DN used to authenticate.
-- `spec.passwordSecretRef` (ResourceRef) — Secret reference containing the bind password.
-- `spec.implementation` (enum: `openldap`|`activedirectory`, default: `openldap`).
-- `spec.tlsSecretRef` (ResourceRef, optional) — Secret reference with `ca.crt` to trust custom CAs.
-- `spec.startTLS` (bool, default: false) — enable StartTLS for plain `ldap://` URLs.
+### Entry
 
-Example `Server`:
+| Field             | Type                | Default | Description                                    |
+|-------------------|---------------------|---------|------------------------------------------------|
+| `spec.dn`         | string              | —       | Distinguished name (validated by webhook)      |
+| `spec.prune`      | bool                | `true`  | Delete the LDAP entry when resource is deleted |
+| `spec.force`      | bool                | `false` | Allow destructive attribute modifications      |
+| `spec.attributes` | map[string][]string | —       | LDAP attributes to reconcile                   |
+| `spec.serverRef`  | ResourceRef         | —       | Reference to a `Server` resource               |
 
-```yaml
-apiVersion: klap.ripolin.github.com/v1alpha1
-kind: Server
-metadata:
-  name: ldap-server
-  namespace: default
-spec:
-  url: ldap://ldap.openldap.svc:389
-  baseDN: dc=example,dc=org
-  bindDN: cn=admin,dc=example,dc=org
-  passwordSecretRef:
-    name: ldap-server-password
-    namespace: default
-  implementation: openldap
-  startTLS: false
-  tlsSecretRef:
-    name: ldap-tls
-    namespace: default
-```
+#### Secret key override
 
-## Secrets
-
-By default, TLS Secret (when using `tlsSecretRef`) should include `ca.crt` key containing PEM-encoded CA certificates and server password Secret should include `password` key.
-
-If necessary, secret key could be changed to pinpoint another exiting key.
-
-Example:
+By default `passwordSecretRef` reads the `password` key and `tlsSecretRef` reads `ca.crt`. Both can be overridden:
 
 ```yaml
-apiVersion: klap.ripolin.github.com/v1alpha1
-kind: Server
-metadata:
-  name: ldap-server
-  namespace: default
 spec:
-  ...
   tlsSecretRef:
     name: ldap-tls
     namespace: default
     key: myBundle
 ```
 
-## Samples
-
-See `config/samples/` for example `Entry` manifests. Consider adding a `Server` sample there to simplify getting started.
-
 ## Development
 
-Run controller locally with webhooks (recommended via `make` targets). Tests and webhooks are under `internal/`.
+### Prerequisites
+
+- Go (see `go.mod`)
+- Docker
+- `kubectl` and a local cluster (e.g. [kind](https://kind.sigs.k8s.io/))
+
+### Common targets
+
+```sh
+make docker-build IMG=<registry>/klap:dev  # build the controller image
+make install                               # install CRDs
+make deploy IMG=<registry>/klap:dev        # deploy via Kustomize
+make helm-deploy IMG=<registry>/klap:dev   # deploy via Helm
+make test                                  # run unit tests
+make test-e2e                              # run e2e tests (requires a cluster)
+make undeploy && make uninstall            # cleanup
+```
+
+### Samples
+
+Ready-to-use manifests are available in `config/samples/`.
 
 ## Contributing
 
-Issues and pull requests welcome. Follow project conventions in `PROJECT` and existing module structure.
-
----
-Generated from source: PROJECT and API types under `api/v1alpha1`.
+Issues and pull requests are welcome. Please follow the existing commit convention (used to generate the changelog via [git-cliff](https://git-cliff.org/)).
