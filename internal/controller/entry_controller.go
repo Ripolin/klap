@@ -181,9 +181,10 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	if entry.DeletionTimestamp != nil {
 
-		err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{}))
-		if err != nil {
-			return r.setStatusUnavailable(ctx, entry, err)
+		if err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{})); err != nil {
+			if !ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+				return r.setStatusUnavailable(ctx, entry, err)
+			}
 		}
 
 		if controllerutil.RemoveFinalizer(entry, Finalizer) {
