@@ -413,7 +413,7 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 		Message:            "Entry is reconciled successfully",
 		ObservedGeneration: entry.Generation,
 	}) {
-		r.Recorder.Eventf(entry, nil, "Normal", "EntryDriftDetection", "Reconcile", "entry %s is available", *entry.Spec.DN)
+		r.Recorder.Eventf(entry, nil, "Normal", "EntryDriftDetection", "Reconcile", "entry %s successfully reconciled", *entry.Spec.DN)
 		if err := r.Status().Update(ctx, entry); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -425,7 +425,7 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 // setStatusUnavailable updates the Entry status to Unavailable with the provided error message.
 func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) (ctrl.Result, error) {
 
-	r.Recorder.Eventf(entry, nil, "Warning", "EntryDriftDetection", "ErrorOccurs", err.Error())
+	r.Recorder.Eventf(entry, nil, "Warning", "ErrorOccurs", "Reconcile", err.Error())
 
 	status := metav1.ConditionFalse
 

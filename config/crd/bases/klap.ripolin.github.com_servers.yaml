@@ -18,6 +18,9 @@ spec:
     - jsonPath: .spec.url
       name: URL
       type: string
+    - jsonPath: .spec.implementation
+      name: IMPLEMENTATION
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date

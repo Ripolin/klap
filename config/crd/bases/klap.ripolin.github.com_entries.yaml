@@ -18,6 +18,9 @@ spec:
     - jsonPath: .spec.dn
       name: DN
       type: string
+    - jsonPath: .spec.serverRef.name
+      name: SERVER
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Available")].status
       name: AVAILABLE
       type: string
@@ -80,6 +83,7 @@ spec:
                     type: string
                 required:
                 - name
+                - namespace
                 type: object
             required:
             - attributes

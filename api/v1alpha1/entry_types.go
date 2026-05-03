@@ -54,7 +54,7 @@ type ResourceRef struct {
 	Name *string `json:"name"`
 
 	// Namespace of a resource
-	// +optional
+	// +required
 	Namespace *string `json:"namespace"`
 }
 
@@ -86,6 +86,7 @@ type EntryStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="DN",type=string,JSONPath=`.spec.dn`
+// +kubebuilder:printcolumn:name="SERVER",type=string,JSONPath=`.spec.serverRef.name`
 // +kubebuilder:printcolumn:name="AVAILABLE",type=string,JSONPath=`.status.conditions[?(@.type=="Available")].status`
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=`.metadata.creationTimestamp`
 

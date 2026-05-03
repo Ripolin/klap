@@ -73,6 +73,7 @@ type SecretRef struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:printcolumn:name="URL",type=string,JSONPath=`.spec.url`
+// +kubebuilder:printcolumn:name="IMPLEMENTATION",type=string,JSONPath=`.spec.implementation`
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=`.metadata.creationTimestamp`
 
 // Server is the Schema for the servers API
