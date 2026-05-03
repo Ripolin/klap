@@ -187,7 +187,7 @@ func main() {
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("klap-controller"),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "Entry")
+		setupLog.Error(err, "Failed to create controller", "controller", "entry")
 		os.Exit(1)
 	}
 	// nolint:goconst
