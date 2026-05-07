@@ -166,3 +166,5 @@ Ready-to-use manifests are available in `config/samples/`.
 Issues and pull requests are welcome. Please follow the existing commit convention (used to generate the changelog via [git-cliff](https://git-cliff.org/)).
 
 ## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
