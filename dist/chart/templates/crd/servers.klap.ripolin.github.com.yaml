@@ -1,4 +1,4 @@
-{{- if .Values.crd.enable }}
+{{- if .Values.crd.enabled }}
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -6,7 +6,7 @@ metadata:
     {{- if .Values.crd.keep }}
     "helm.sh/resource-policy": keep
     {{- end }}
-    controller-gen.kubebuilder.io/version: v0.20.1
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: servers.klap.ripolin.github.com
 spec:
   group: klap.ripolin.github.com
@@ -52,6 +52,68 @@ spec:
           spec:
             description: spec defines the desired state of Server
             properties:
+              allowedNamespaces:
+                description: |-
+                  AllowedNamespaces restricts which namespaces' Entries are allowed to use
+                  this Server. When omitted, only Entries from the Server's own namespace may
+                  reference it. An Entry located in the same namespace as the Server is always
+                  allowed, regardless of this selector.
+                properties:
+                  labelSelector:
+                    description: |-
+                      LabelSelector selects namespaces by their labels. When set, any Entry whose
+                      namespace carries labels matching the selector is allowed to use the Server.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  namePattern:
+                    description: |-
+                      NamePattern is a regular expression matched against the full name of the
+                      Entry's namespace. When set, any Entry whose namespace name matches the
+                      pattern is allowed to use the Server.
+                    type: string
+                type: object
               baseDN:
                 description: BaseDN is the base distinguished name for the server
                 type: string
@@ -74,13 +136,9 @@ spec:
                   name:
                     description: Name of a secret
                     type: string
-                  namespace:
-                    description: Namespace of a secret
-                    type: string
                 required:
                 - key
                 - name
-                - namespace
                 type: object
               startTLS:
                 default: false
@@ -97,13 +155,9 @@ spec:
                   name:
                     description: Name of a secret
                     type: string
-                  namespace:
-                    description: Namespace of a secret
-                    type: string
                 required:
                 - key
                 - name
-                - namespace
                 type: object
               url:
                 description: Url is the URL of the server

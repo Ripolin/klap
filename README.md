@@ -1,7 +1,7 @@
 # 👏 klap
 
 [![Status](https://img.shields.io/badge/status-WIP-orange)](https://github.com/Ripolin/klap)
-[![Go](https://img.shields.io/badge/Go-1.25-blue?logo=go)](go.mod)
+[![Go](https://img.shields.io/badge/Go-1.26-blue?logo=go)](go.mod)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 **klap** is a Kubernetes operator that declaratively manages LDAP directory entries via custom resources.

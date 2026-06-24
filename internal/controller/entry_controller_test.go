@@ -83,7 +83,7 @@ var _ = Describe("Entry Controller", func() {
 						Namespace: ns,
 					},
 					StringData: map[string]string{
-						"password": "password",
+						"password": "foobar",
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
