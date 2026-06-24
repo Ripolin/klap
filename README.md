@@ -63,7 +63,6 @@ spec:
   bindDN: cn=admin,dc=example,dc=org
   passwordSecretRef:
     name: ldap-passwd
-    namespace: default
   implementation: openldap  # or activedirectory (beta)
   startTLS: false
 ```
@@ -105,15 +104,47 @@ Once applied, `klap` creates or updates the corresponding entry in the LDAP dire
 
 ### Server
 
-| Field                    | Type        | Default    | Description                                    |
-|--------------------------|-------------|------------|------------------------------------------------|
-| `spec.url`               | string      | —          | LDAP URL (`ldap://` or `ldaps://`)             |
-| `spec.baseDN`            | string      | —          | Base DN for searches                           |
-| `spec.bindDN`            | string      | —          | Bind DN for authentication                     |
-| `spec.passwordSecretRef` | ResourceRef | —          | Secret containing the `password` key           |
-| `spec.implementation`    | enum        | `openldap` | `openldap` or `activedirectory` *(beta)*       |
-| `spec.tlsSecretRef`      | ResourceRef | —          | Secret with `ca.crt` for custom CA trust       |
-| `spec.startTLS`          | bool        | `false`    | Enable StartTLS on plain `ldap://` connections |
+| Field                    | Type              | Default    | Description                                            |
+|--------------------------|-------------------|------------|--------------------------------------------------------|
+| `spec.url`               | string            | —          | LDAP URL (`ldap://` or `ldaps://`)                     |
+| `spec.baseDN`            | string            | —          | Base DN for searches                                   |
+| `spec.bindDN`            | string            | —          | Bind DN for authentication                             |
+| `spec.passwordSecretRef` | ResourceRef       | —          | Secret containing the `password` key                   |
+| `spec.implementation`    | enum              | `openldap` | `openldap` or `activedirectory` *(beta)*               |
+| `spec.tlsSecretRef`      | ResourceRef       | —          | Secret with `ca.crt` for custom CA trust               |
+| `spec.startTLS`          | bool              | `false`    | Enable StartTLS on plain `ldap://` connections         |
+| `spec.allowedNamespaces` | NamespaceSelector | —          | Restrict which namespaces' Entries may use this Server |
+
+#### Restricting which namespaces may use a Server
+
+By default an `Entry` may only reference a `Server` located in its **own
+namespace**. Set `spec.allowedNamespaces` to grant access to Entries in other
+namespaces. An `Entry` is granted access when **any** of these is true:
+
+- it lives in the **same namespace** as the `Server` (always allowed);
+- its namespace **name** matches the `namePattern` regular expression (anchored to the full name);
+- its namespace carries **labels** matching `labelSelector`.
+
+```yaml
+apiVersion: klap.ripolin.github.com/v1alpha1
+kind: Server
+metadata:
+  name: ldap-server
+  namespace: ldap-system
+spec:
+  # ...
+  allowedNamespaces:
+    # Allow any namespace whose name starts with "team-"
+    namePattern: "team-.*"
+    # ...and/or any namespace labelled klap.ripolin.github.com/ldap=true
+    labelSelector:
+      matchLabels:
+        klap.ripolin.github.com/ldap: "true"
+```
+
+> When `allowedNamespaces` is omitted, only Entries from the Server's own
+> namespace are allowed. When it is set, an Entry from a different namespace that
+> matches none of the criteria is rejected and its status reports the error.
 
 ### Entry
 
@@ -133,7 +164,6 @@ By default `passwordSecretRef` reads the `password` key and `tlsSecretRef` reads
 spec:
   tlsSecretRef:
     name: ldap-tls
-    namespace: default
     key: myBundle
 ```
 

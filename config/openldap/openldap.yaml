@@ -40,6 +40,14 @@ spec:
   selector:
     app: openldap
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openldap-passwd
+type: Opaque
+stringData:
+  password: passwd
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -61,6 +69,11 @@ spec:
           env:
             - name: BITNAMI_DEBUG
               value: "yes"
+            - name: LDAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: openldap-passwd
+                  key: password
             - name: LDAP_CONFIG_ADMIN_ENABLED
               value: "yes"
             - name: LDAP_ENABLE_TLS

@@ -22,12 +22,14 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"time"
 
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -80,6 +82,7 @@ type EntryReconciler struct {
 // +kubebuilder:rbac:groups=klap.ripolin.github.com,resources=servers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -225,7 +228,68 @@ func (r *EntryReconciler) getServer(ctx context.Context, entry *klapv1alpha1.Ent
 	if err != nil {
 		return nil, err
 	}
+
+	allowed, err := r.isNamespaceAllowed(ctx, entry, server)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, fmt.Errorf(
+			"namespace %q is not allowed to use server %s/%s",
+			entry.Namespace, server.Namespace, server.Name)
+	}
+
 	return server, nil
+}
+
+// isNamespaceAllowed reports whether the Entry's namespace is allowed to use the
+// referenced Server. An Entry living in the same namespace as the Server is
+// always allowed. When the Server defines no AllowedNamespaces selector, only
+// Entries from the Server's own namespace are allowed. Otherwise the Entry's
+// namespace must match at least one configured criterion (name pattern or label
+// selector).
+func (r *EntryReconciler) isNamespaceAllowed(ctx context.Context, entry *klapv1alpha1.Entry, server *klapv1alpha1.Server) (bool, error) {
+	// An Entry in the same namespace as the Server is always allowed.
+	if entry.Namespace == server.Namespace {
+		return true, nil
+	}
+
+	selector := server.Spec.AllowedNamespaces
+
+	// No filtering configured: only the Server's own namespace is allowed.
+	if selector == nil {
+		return false, nil
+	}
+
+	// Match against the namespace name using the provided regular expression.
+	if selector.NamePattern != nil {
+		re, err := regexp.Compile(fmt.Sprintf("^(?:%s)$", *selector.NamePattern))
+		if err != nil {
+			return false, fmt.Errorf("invalid namespace name pattern %q: %w", *selector.NamePattern, err)
+		}
+		if re.MatchString(entry.Namespace) {
+			return true, nil
+		}
+	}
+
+	// Match against the namespace labels using the provided label selector.
+	if selector.LabelSelector != nil {
+		sel, err := metav1.LabelSelectorAsSelector(selector.LabelSelector)
+		if err != nil {
+			return false, fmt.Errorf("invalid namespace label selector: %w", err)
+		}
+
+		ns := &corev1.Namespace{}
+		if err := r.Get(ctx, types.NamespacedName{Name: entry.Namespace}, ns); err != nil {
+			return false, err
+		}
+
+		if sel.Matches(labels.Set(ns.Labels)) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // getCACert retrieves the TLS certs bundle referenced by the Server.
@@ -234,7 +298,7 @@ func (r *EntryReconciler) getCACert(ctx context.Context, server *klapv1alpha1.Se
 		secret = &corev1.Secret{}
 		ref    = &types.NamespacedName{
 			Name:      *server.Spec.TlsSecretRef.Name,
-			Namespace: *server.Spec.TlsSecretRef.Namespace,
+			Namespace: server.Namespace,
 		}
 	)
 	err := r.Get(ctx, *ref, secret)
@@ -253,7 +317,7 @@ func (r *EntryReconciler) getPassword(ctx context.Context, server *klapv1alpha1.
 		secret = &corev1.Secret{}
 		ref    = &types.NamespacedName{
 			Name:      *server.Spec.PasswordSecretRef.Name,
-			Namespace: *server.Spec.PasswordSecretRef.Namespace,
+			Namespace: server.Namespace,
 		}
 	)
 	err := r.Get(ctx, *ref, secret)

@@ -5,9 +5,15 @@ metadata:
     app.kubernetes.io/name: klap
     app.kubernetes.io/managed-by: kustomize
   name: server-sample
+  namespace: openldap
 spec:
   url: ldap://ldap.openldap.svc.cluster.local
   baseDN: dc=example,dc=org
   bindDN: cn=admin,dc=example,dc=org
+  startTLS: true
   passwordSecretRef:
-    name: ldap-passwd
+    name: openldap-passwd
+  tlsSecretRef:
+    name: openldap-server-cert
+  allowedNamespaces:
+    namePattern: default

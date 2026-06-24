@@ -63,19 +63,12 @@ type ServerCustomDefaulter struct{}
 func (d *ServerCustomDefaulter) Default(_ context.Context, obj *klapv1alpha1.Server) error {
 	serverlog.Info("Defaulting for Server", "name", obj.GetName())
 
-	if obj.Spec.PasswordSecretRef.Namespace == nil {
-		obj.Spec.PasswordSecretRef.Namespace = &obj.Namespace
-	}
-
 	if obj.Spec.PasswordSecretRef.Key == nil {
 		key := Password
 		obj.Spec.PasswordSecretRef.Key = &key
 	}
 
 	if obj.Spec.TlsSecretRef.Name != nil {
-		if obj.Spec.TlsSecretRef.Namespace == nil {
-			obj.Spec.TlsSecretRef.Namespace = &obj.Namespace
-		}
 		if obj.Spec.TlsSecretRef.Key == nil {
 			key := CACertName
 			obj.Spec.TlsSecretRef.Key = &key

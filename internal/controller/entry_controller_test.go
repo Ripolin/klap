@@ -107,9 +107,8 @@ var _ = Describe("Entry Controller", func() {
 						BindDN: &bindDN,
 						Url:    &ldapUrl,
 						PasswordSecretRef: klapv1alpha1.SecretRef{
-							Name:      &passwordName,
-							Namespace: &ns,
-							Key:       &key,
+							Name: &passwordName,
+							Key:  &key,
 						},
 					},
 				}
@@ -245,6 +244,147 @@ var _ = Describe("Entry Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("When filtering entries by namespace", func() {
+		const serverNamespace = "server-ns"
+
+		ctx := context.Background()
+
+		var reconciler *EntryReconciler
+
+		// newServer builds a Server living in serverNamespace with the given selector.
+		newServer := func(selector *klapv1alpha1.NamespaceSelector) *klapv1alpha1.Server {
+			return &klapv1alpha1.Server{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "filtered-server",
+					Namespace: serverNamespace,
+				},
+				Spec: klapv1alpha1.ServerSpec{
+					AllowedNamespaces: selector,
+				},
+			}
+		}
+
+		// newEntry builds an Entry living in the given namespace.
+		newEntry := func(namespace string) *klapv1alpha1.Entry {
+			return &klapv1alpha1.Entry{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "filtered-entry",
+					Namespace: namespace,
+				},
+			}
+		}
+
+		ptr := func(s string) *string { return &s }
+
+		BeforeEach(func() {
+			reconciler = &EntryReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: recorder,
+			}
+
+			By("creating namespaces used by the label selector cases")
+			for name, lbls := range map[string]map[string]string{
+				"team-blue":   {"team": "blue"},
+				"team-red":    {"team": "red"},
+				"no-label-ns": nil,
+			} {
+				ns := &corev1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:   name,
+						Labels: lbls,
+					},
+				}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, ns)
+				if err != nil && errors.IsNotFound(err) {
+					Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+				}
+			}
+		})
+
+		It("allows an entry living in the same namespace as the server", func() {
+			// Even with a selector that matches nothing, same-namespace is allowed.
+			server := newServer(&klapv1alpha1.NamespaceSelector{NamePattern: ptr("nomatch")})
+			entry := newEntry(serverNamespace)
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeTrue())
+		})
+
+		It("denies a foreign namespace when no selector is configured", func() {
+			server := newServer(nil)
+			entry := newEntry("team-blue")
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeFalse())
+		})
+
+		It("allows the server's own namespace when no selector is configured", func() {
+			server := newServer(nil)
+			entry := newEntry(serverNamespace)
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeTrue())
+		})
+
+		It("allows an entry whose namespace name matches the pattern", func() {
+			server := newServer(&klapv1alpha1.NamespaceSelector{NamePattern: ptr("team-.*")})
+			entry := newEntry("team-blue")
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeTrue())
+		})
+
+		It("denies an entry whose namespace name does not match the pattern", func() {
+			server := newServer(&klapv1alpha1.NamespaceSelector{NamePattern: ptr("team-.*")})
+			entry := newEntry("no-label-ns")
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeFalse())
+		})
+
+		It("anchors the pattern to the full namespace name", func() {
+			// "team" must not match "team-blue" since the pattern is anchored.
+			server := newServer(&klapv1alpha1.NamespaceSelector{NamePattern: ptr("team")})
+			entry := newEntry("team-blue")
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeFalse())
+		})
+
+		It("allows an entry whose namespace labels match the selector", func() {
+			server := newServer(&klapv1alpha1.NamespaceSelector{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"team": "blue"},
+				},
+			})
+			entry := newEntry("team-blue")
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeTrue())
+		})
+
+		It("denies an entry whose namespace labels do not match the selector", func() {
+			server := newServer(&klapv1alpha1.NamespaceSelector{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"team": "blue"},
+				},
+			})
+			entry := newEntry("team-red")
+
+			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(allowed).To(BeFalse())
 		})
 	})
 })
