@@ -249,6 +249,8 @@ var _ = Describe("Entry Controller", func() {
 
 	Context("When filtering entries by namespace", func() {
 		const serverNamespace = "server-ns"
+		const teamLabel = "team"
+		const teamBlue = "blue"
 
 		ctx := context.Background()
 
@@ -288,8 +290,8 @@ var _ = Describe("Entry Controller", func() {
 
 			By("creating namespaces used by the label selector cases")
 			for name, lbls := range map[string]map[string]string{
-				"team-blue":   {"team": "blue"},
-				"team-red":    {"team": "red"},
+				"team-blue":   {teamLabel: teamBlue},
+				"team-red":    {teamLabel: "red"},
 				"no-label-ns": nil,
 			} {
 				ns := &corev1.Namespace{
@@ -364,7 +366,7 @@ var _ = Describe("Entry Controller", func() {
 		It("allows an entry whose namespace labels match the selector", func() {
 			server := newServer(&klapv1alpha1.NamespaceSelector{
 				LabelSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"team": "blue"},
+					MatchLabels: map[string]string{teamLabel: teamBlue},
 				},
 			})
 			entry := newEntry("team-blue")
@@ -377,7 +379,7 @@ var _ = Describe("Entry Controller", func() {
 		It("denies an entry whose namespace labels do not match the selector", func() {
 			server := newServer(&klapv1alpha1.NamespaceSelector{
 				LabelSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{"team": "blue"},
+					MatchLabels: map[string]string{teamLabel: teamBlue},
 				},
 			})
 			entry := newEntry("team-red")
