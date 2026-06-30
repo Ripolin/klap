@@ -61,6 +61,12 @@ type ServerSpec struct {
 	// allowed, regardless of this selector.
 	// +optional
 	AllowedNamespaces *NamespaceSelector `json:"allowedNamespaces,omitempty"`
+
+	// Timeout is the maximum duration for any operation against the server. When
+	// omitted, a default timeout of 30 seconds is used.
+	// +default="30s"
+	// +required
+	Timeout *metav1.Duration `json:"timeout"`
 }
 
 // NamespaceSelector defines criteria used to select the namespaces whose Entries

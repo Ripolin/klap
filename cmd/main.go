@@ -64,6 +64,7 @@ func main() {
 	var enableHTTP2 bool
 	var development bool
 	var tlsOpts []func(*tls.Config)
+	var maxConcurrentReconciles int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -83,6 +84,9 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.BoolVar(&development, "development", false,
 		"If set, the logger is configured for development instead of production.")
+	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 1,
+		"The maximum number of concurrent reconciles for each controller. "+
+			"Defaults to 1, which means only one reconcile at a time. Increase this value to allow more concurrent reconciles.")
 	opts := zap.Options{
 		Development: development,
 	}
@@ -186,7 +190,7 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorder("klap-controller"),
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(mgr, maxConcurrentReconciles); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "entry")
 		os.Exit(1)
 	}

@@ -114,6 +114,7 @@ Once applied, `klap` creates or updates the corresponding entry in the LDAP dire
 | `spec.tlsSecretRef`      | ResourceRef       | —          | Secret with `ca.crt` for custom CA trust               |
 | `spec.startTLS`          | bool              | `false`    | Enable StartTLS on plain `ldap://` connections         |
 | `spec.allowedNamespaces` | NamespaceSelector | —          | Restrict which namespaces' Entries may use this Server |
+| `spec.timeout`           | Duration          | `30s`      | Maximum duration for any operation against the server  |
 
 #### Restricting which namespaces may use a Server
 

@@ -73,6 +73,7 @@ var _ = Describe("Entry Controller", func() {
 		BeforeEach(func() {
 			mockCtrl := gomock.NewController(GinkgoT())
 			mockClient = mock_ldap.NewMockClient(mockCtrl)
+			mockClient.EXPECT().SetTimeout(gomock.Any()).AnyTimes()
 
 			By("creating the custom resource for the Kind Secret")
 			err := k8sClient.Get(ctx, passwdTypeNamespacedName, passwd)

@@ -31,9 +31,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -49,6 +51,7 @@ import (
 const (
 	requeueAfterSuccess = 5 * time.Minute
 	requeueAfterError   = time.Minute
+	requeueFactor       = 0.2
 	typeAvailable       = "Available"
 )
 
@@ -156,6 +159,14 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
+	defer func() {
+		if err := cli.Unbind(); err != nil {
+			log.Error(err, err.Error())
+		}
+	}()
+
+	cli.SetTimeout(server.Spec.Timeout.Duration)
+
 	if *server.Spec.StartTLS && serverUrl.Scheme == "ldap" {
 		if err = cli.StartTLS(tlsCfg); err != nil {
 			return r.setStatusUnavailable(ctx, entry, err)
@@ -174,14 +185,6 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.setStatusUnavailable(ctx, entry, err)
 	}
 
-	defer func() {
-		err = cli.Unbind()
-
-		if err != nil {
-			log.Error(err, err.Error())
-		}
-	}()
-
 	if entry.DeletionTimestamp != nil {
 
 		if err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{})); err != nil {
@@ -198,7 +201,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 		log.V(1).Info("Entry deleted", "dn", entry.Spec.DN)
 
-		return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+		return ctrl.Result{RequeueAfter: wait.Jitter(requeueAfterSuccess, requeueFactor)}, nil
 
 	}
 
@@ -339,14 +342,14 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, s
 			ldap.ScopeWholeSubtree,
 			ldap.NeverDerefAliases,
 			0, 0, false,
-			fmt.Sprintf("(%s=%s)", OpenLDAPDN, *entry.Spec.DN),
+			fmt.Sprintf("(%s=%s)", OpenLDAPDN, ldap.EscapeFilter(*entry.Spec.DN)),
 			[]string{OpenLDAPGUID},
 			nil,
 		)
 	)
 
 	if *server.Spec.Implementation == ActiveDirectory {
-		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryDN, *entry.Spec.DN)
+		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryDN, ldap.EscapeFilter(*entry.Spec.DN))
 		search.Attributes = []string{ActiveDirectoryGUID}
 	}
 
@@ -388,14 +391,14 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 			ldap.ScopeWholeSubtree,
 			ldap.NeverDerefAliases,
 			0, 0, false,
-			fmt.Sprintf("(%s=%s)", OpenLDAPGUID, *entry.Status.GUID),
+			fmt.Sprintf("(%s=%s)", OpenLDAPGUID, ldap.EscapeFilter(*entry.Status.GUID)),
 			[]string{"*"},
 			nil,
 		)
 	)
 
 	if *server.Spec.Implementation == ActiveDirectory {
-		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryGUID, *entry.Status.GUID)
+		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryGUID, ldap.EscapeFilter(*entry.Status.GUID))
 	}
 
 	if searchResult, err := cli.Search(search); err != nil {
@@ -483,7 +486,7 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 		}
 	}
 
-	return ctrl.Result{RequeueAfter: requeueAfterSuccess}, nil
+	return ctrl.Result{RequeueAfter: wait.Jitter(requeueAfterSuccess, requeueFactor)}, nil
 }
 
 // setStatusUnavailable updates the Entry status to Unavailable with the provided error message.
@@ -512,13 +515,14 @@ func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv
 		}
 	}
 
-	return ctrl.Result{RequeueAfter: requeueAfterError}, nil
+	return ctrl.Result{RequeueAfter: wait.Jitter(requeueAfterError, requeueFactor)}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *EntryReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *EntryReconciler) SetupWithManager(mgr ctrl.Manager, maxConcurrentReconciles int) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&klapv1alpha1.Entry{}).
 		Named("entry").
+		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
 		Complete(r)
 }
