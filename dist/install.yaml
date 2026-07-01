@@ -327,6 +327,12 @@ spec:
                 description: StartTLS indicates whether to use StartTLS when connecting
                   to the server
                 type: boolean
+              timeout:
+                default: 30s
+                description: |-
+                  Timeout is the maximum duration for any operation against the server. When
+                  omitted, a default timeout of 30 seconds is used.
+                type: string
               tlsSecretRef:
                 description: TlsSecretRef is a reference to a secret containing TLS
                   configuration for the server
@@ -350,6 +356,7 @@ spec:
             - implementation
             - passwordSecretRef
             - startTLS
+            - timeout
             - url
             type: object
         required:
