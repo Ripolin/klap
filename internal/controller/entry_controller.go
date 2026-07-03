@@ -26,31 +26,30 @@ import (
 	"slices"
 	"time"
 
+	"github.com/go-ldap/ldap/v3"
+	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
+	"golang.org/x/time/rate"
+	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-
-	corev1 "k8s.io/api/core/v1"
-
-	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/types"
-
-	"github.com/go-ldap/ldap/v3"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // Global constants
 const (
 	requeueAfterSuccess = 5 * time.Minute
-	requeueAfterError   = time.Minute
 	requeueFactor       = 0.2
 	typeAvailable       = "Available"
 )
@@ -125,13 +124,13 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	server, err := r.getServer(ctx, entry)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, entry, err)
+		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
 	if server.Spec.TlsSecretRef.Name != nil {
 		cacert, err := r.getCACert(ctx, server)
 		if err != nil {
-			return r.setStatusUnavailable(ctx, entry, err)
+			return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 		}
 		tlsCfg.RootCAs.AppendCertsFromPEM(cacert)
 	}
@@ -139,7 +138,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	serverUrl, err := url.Parse(*server.Spec.Url)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, entry, err)
+		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
 	tlsCfg.ServerName = serverUrl.Hostname()
@@ -156,7 +155,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, entry, err)
+		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
 	defer func() {
@@ -169,27 +168,27 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	if *server.Spec.StartTLS && serverUrl.Scheme == "ldap" {
 		if err = cli.StartTLS(tlsCfg); err != nil {
-			return r.setStatusUnavailable(ctx, entry, err)
+			return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 		}
 	}
 
 	password, err := r.getPassword(ctx, server)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, entry, err)
+		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
 	err = cli.Bind(*server.Spec.BindDN, password)
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, entry, err)
+		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
 	if entry.DeletionTimestamp != nil {
 
 		if err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{})); err != nil {
 			if !ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
-				return r.setStatusUnavailable(ctx, entry, err)
+				return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 			}
 		}
 
@@ -201,7 +200,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 		log.V(1).Info("Entry deleted", "dn", entry.Spec.DN)
 
-		return ctrl.Result{RequeueAfter: wait.Jitter(requeueAfterSuccess, requeueFactor)}, nil
+		return ctrl.Result{}, nil
 
 	}
 
@@ -212,10 +211,14 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	if err != nil {
-		return r.setStatusUnavailable(ctx, entry, err)
+		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
-	return r.setStatusAvailable(ctx, entry)
+	if err = r.setStatusAvailable(ctx, entry); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: wait.Jitter(requeueAfterSuccess, requeueFactor)}, nil
 }
 
 // getServer retrieves the server configuration secret referenced by the Entry.
@@ -471,7 +474,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 }
 
 // setStatusAvailable updates the Entry status to Available.
-func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) (ctrl.Result, error) {
+func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1alpha1.Entry) error {
 
 	if meta.SetStatusCondition(&entry.Status.Conditions, metav1.Condition{
 		Type:               typeAvailable,
@@ -481,16 +484,14 @@ func (r *EntryReconciler) setStatusAvailable(ctx context.Context, entry *klapv1a
 		ObservedGeneration: entry.Generation,
 	}) {
 		r.Recorder.Eventf(entry, nil, "Normal", "EntryDriftDetection", "Reconcile", "entry %s successfully reconciled", *entry.Spec.DN)
-		if err := r.Status().Update(ctx, entry); err != nil {
-			return ctrl.Result{}, err
-		}
+		return r.Status().Update(ctx, entry)
 	}
 
-	return ctrl.Result{RequeueAfter: wait.Jitter(requeueAfterSuccess, requeueFactor)}, nil
+	return nil
 }
 
 // setStatusUnavailable updates the Entry status to Unavailable with the provided error message.
-func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) (ctrl.Result, error) {
+func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv1alpha1.Entry, err error) error {
 
 	r.Recorder.Eventf(entry, nil, "Warning", "ErrorOccurs", "Reconcile", err.Error())
 
@@ -510,19 +511,31 @@ func (r *EntryReconciler) setStatusUnavailable(ctx context.Context, entry *klapv
 		Message:            err.Error(),
 		ObservedGeneration: entry.Generation,
 	}) {
-		if err := r.Status().Update(ctx, entry); err != nil {
-			return ctrl.Result{}, err
-		}
+		return r.Status().Update(ctx, entry)
 	}
 
-	return ctrl.Result{RequeueAfter: wait.Jitter(requeueAfterError, requeueFactor)}, nil
+	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *EntryReconciler) SetupWithManager(mgr ctrl.Manager, maxConcurrentReconciles int) error {
+
+	rateLimiter := workqueue.NewTypedMaxOfRateLimiter(
+		workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](
+			10*time.Second,
+			5*time.Minute,
+		),
+		&workqueue.TypedBucketRateLimiter[reconcile.Request]{
+			Limiter: rate.NewLimiter(rate.Limit(10), 100),
+		},
+	)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&klapv1alpha1.Entry{}).
 		Named("entry").
-		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: maxConcurrentReconciles,
+			RateLimiter:             rateLimiter,
+		}).
 		Complete(r)
 }
