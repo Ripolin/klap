@@ -19,6 +19,9 @@ package v1alpha1
 import (
 	"context"
 
+	"github.com/go-ldap/ldap/v3"
+	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
+	"github.com/ripolin/klap/internal/controller"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -26,11 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-
-	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
-	"github.com/ripolin/klap/internal/controller"
-
-	"github.com/go-ldap/ldap/v3"
 )
 
 // nolint:unused
@@ -104,7 +102,7 @@ func validateEntry(entry *klapv1alpha1.Entry) error {
 	var allErrs field.ErrorList
 
 	if _, err := ldap.ParseDN(*entry.Spec.DN); err != nil {
-		fieldErr := field.Invalid(field.NewPath("spec").Child("dn"), entry.Name, "must be a valid distinguished name")
+		fieldErr := field.Invalid(field.NewPath("spec").Child("dn"), entry.Spec.DN, "must be a valid distinguished name")
 		allErrs = append(allErrs, fieldErr)
 	}
 

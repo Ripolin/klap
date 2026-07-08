@@ -21,8 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
-	// TODO (user): Add any additional imports if needed
-
+	"github.com/ripolin/klap/internal/util/boolptr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -108,9 +107,10 @@ var _ = Describe("Server Webhook", func() {
 			bindDN := "bar"
 			ldapUrl := "http://my-ldap-server"
 			obj.Spec = klapv1alpha1.ServerSpec{
-				BaseDN: &baseDN,
-				BindDN: &bindDN,
-				Url:    &ldapUrl,
+				BaseDN:   &baseDN,
+				BindDN:   &bindDN,
+				Url:      &ldapUrl,
+				StartTLS: boolptr.True(),
 			}
 			Expect(validator.ValidateCreate(ctx, obj)).Error().To(HaveOccurred())
 		})
@@ -120,9 +120,10 @@ var _ = Describe("Server Webhook", func() {
 			bindDN := "cn=admin,dc=foobar"
 			ldapUrl := "ldap://my-ldap-server"
 			obj.Spec = klapv1alpha1.ServerSpec{
-				BaseDN: &baseDN,
-				BindDN: &bindDN,
-				Url:    &ldapUrl,
+				BaseDN:   &baseDN,
+				BindDN:   &bindDN,
+				Url:      &ldapUrl,
+				StartTLS: boolptr.True(),
 			}
 			Expect(validator.ValidateUpdate(ctx, oldObj, obj)).To(BeNil())
 		})

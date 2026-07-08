@@ -18,19 +18,20 @@ package v1alpha1
 
 import (
 	"context"
+	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 
+	"github.com/go-ldap/ldap/v3"
+	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
+	"github.com/ripolin/klap/internal/util/boolptr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
-
-	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
-
-	"github.com/go-ldap/ldap/v3"
 )
 
 const (
@@ -92,14 +93,14 @@ type ServerCustomValidator struct{}
 func (v *ServerCustomValidator) ValidateCreate(_ context.Context, obj *klapv1alpha1.Server) (admission.Warnings, error) {
 	serverlog.Info("Validation for Server upon creation", "name", obj.GetName())
 
-	return nil, validateServer(obj)
+	return validateServer(obj)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type Server.
 func (v *ServerCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj *klapv1alpha1.Server) (admission.Warnings, error) {
 	serverlog.Info("Validation for Server upon update", "name", newObj.GetName())
 
-	return nil, validateServer(newObj)
+	return validateServer(newObj)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type Server.
@@ -110,29 +111,44 @@ func (v *ServerCustomValidator) ValidateDelete(_ context.Context, obj *klapv1alp
 }
 
 // validateServer performs the actual validation of the Server resource.
-func validateServer(server *klapv1alpha1.Server) error {
-	var allErrs field.ErrorList
+func validateServer(server *klapv1alpha1.Server) (admission.Warnings, error) {
+	var (
+		allErrs     field.ErrorList
+		allWarnings admission.Warnings
+	)
+
+	selector := server.Spec.AllowedNamespaces
+
+	if selector != nil && selector.NamePattern != nil {
+		_, err := regexp.Compile(fmt.Sprintf("^(?:%s)$", *selector.NamePattern))
+		if err != nil {
+			fieldErr := field.Invalid(field.NewPath("spec").Child("allowedNamespaces").Child("namePattern"), *selector.NamePattern, "must be a valid regular expression")
+			allErrs = append(allErrs, fieldErr)
+		}
+	}
 
 	if _, err := ldap.ParseDN(*server.Spec.BaseDN); err != nil {
-		fieldErr := field.Invalid(field.NewPath("spec").Child("baseDN"), server.Name, "must be a valid distinguished name")
+		fieldErr := field.Invalid(field.NewPath("spec").Child("baseDN"), server.Spec.BaseDN, "must be a valid distinguished name")
 		allErrs = append(allErrs, fieldErr)
 	}
 
 	if _, err := ldap.ParseDN(*server.Spec.BindDN); err != nil {
-		fieldErr := field.Invalid(field.NewPath("spec").Child("bindDN"), server.Name, "must be a valid distinguished name")
+		fieldErr := field.Invalid(field.NewPath("spec").Child("bindDN"), server.Spec.BindDN, "must be a valid distinguished name")
 		allErrs = append(allErrs, fieldErr)
 	}
 
 	if serverUrl, err := url.Parse(*server.Spec.Url); err != nil || !slices.Contains([]string{"ldap", "ldaps"}, serverUrl.Scheme) {
 		fieldErr := field.Invalid(field.NewPath("spec").Child("url"), server.Spec.Url, "must be a valid LDAP URL")
 		allErrs = append(allErrs, fieldErr)
+	} else if serverUrl.Scheme == "ldap" && boolptr.IsSetToFalse(server.Spec.StartTLS) {
+		allWarnings = append(allWarnings, "Using LDAP without StartTLS is not secure. Consider using LDAPS or enabling StartTLS.")
 	}
 
 	if len(allErrs) == 0 {
-		return nil
+		return allWarnings, nil
 	}
 
-	return apierrors.NewInvalid(
+	return allWarnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: "klap.ripolin.github.com", Kind: "Server"},
 		server.Name, allErrs)
 }

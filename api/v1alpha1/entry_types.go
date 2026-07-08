@@ -31,12 +31,12 @@ type EntrySpec struct {
 	// Prune indicates if entry should be delete or not
 	// +default:value=true
 	// +require
-	Prune bool `json:"prune"`
+	Prune *bool `json:"prune"`
 
 	// Force indicates if entry modification should be forced even if it leads to data loss
 	// +default:value=false
 	// +require
-	Force bool `json:"force"`
+	Force *bool `json:"force"`
 
 	// Attributes associated to the entry depends its classes
 	// +required

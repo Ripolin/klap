@@ -20,21 +20,18 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-ldap/ldap/v3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	corev1 "k8s.io/api/core/v1"
-
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
+	"github.com/ripolin/klap/internal/util/boolptr"
 	"github.com/ripolin/klap/test/mock_ldap"
 	gomock "go.uber.org/mock/gomock"
-
-	"github.com/go-ldap/ldap/v3"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var _ = Describe("Entry Controller", func() {
@@ -128,8 +125,8 @@ var _ = Describe("Entry Controller", func() {
 					},
 					Spec: klapv1alpha1.EntrySpec{
 						DN:    &dn,
-						Prune: true,
-						Force: false,
+						Prune: boolptr.True(),
+						Force: boolptr.False(),
 						Attributes: map[string][]string{
 							"objectClass": {"groupOfNames"},
 							"description": {"test"},
@@ -235,6 +232,15 @@ var _ = Describe("Entry Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Deleting the existing resource")
+			mockClient.EXPECT().Search(gomock.Cond(func(search *ldap.SearchRequest) bool {
+				return search.Filter == fmt.Sprintf("(%s=%s)", OpenLDAPGUID, uuid)
+			})).Return(&ldap.SearchResult{
+				Entries: []*ldap.Entry{
+					{
+						DN: dn,
+					},
+				},
+			}, nil)
 			mockClient.EXPECT().Del(gomock.Cond(func(delete *ldap.DelRequest) bool {
 				return delete.DN == dn
 			})).Return(nil)

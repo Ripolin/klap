@@ -27,7 +27,9 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/go-logr/logr"
 	klapv1alpha1 "github.com/ripolin/klap/api/v1alpha1"
+	"github.com/ripolin/klap/internal/util/boolptr"
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -114,7 +116,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	if entry.DeletionTimestamp != nil && !entry.Spec.Prune && controllerutil.RemoveFinalizer(entry, Finalizer) {
+	if entry.DeletionTimestamp != nil && boolptr.IsSetToFalse(entry.Spec.Prune) && controllerutil.RemoveFinalizer(entry, Finalizer) {
 		if err := r.Update(ctx, entry); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -166,7 +168,7 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	cli.SetTimeout(server.Spec.Timeout.Duration)
 
-	if *server.Spec.StartTLS && serverUrl.Scheme == "ldap" {
+	if boolptr.IsSetToTrue(server.Spec.StartTLS) && serverUrl.Scheme == "ldap" {
 		if err = cli.StartTLS(tlsCfg); err != nil {
 			return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 		}
@@ -184,12 +186,12 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
-	if entry.DeletionTimestamp != nil {
+	if entry.DeletionTimestamp != nil && boolptr.IsSetToTrue(entry.Spec.Prune) {
 
-		if err := cli.Del(ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{})); err != nil {
-			if !ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
-				return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
-			}
+		if err := r.deleteEntry(cli, entry, server, log); err != nil {
+			return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
+		} else {
+			log.Info("Entry deleted successfully", "dn", entry.Spec.DN)
 		}
 
 		if controllerutil.RemoveFinalizer(entry, Finalizer) {
@@ -197,8 +199,6 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				return ctrl.Result{}, err
 			}
 		}
-
-		log.V(1).Info("Entry deleted", "dn", entry.Spec.DN)
 
 		return ctrl.Result{}, nil
 
@@ -438,7 +438,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 				modify.Add(k, v)
 				continue
 			}
-			if entry.Spec.Force {
+			if boolptr.IsSetToTrue(entry.Spec.Force) {
 				if slices.Compare(v, current.GetAttributeValues(k)) != 0 {
 					modify.Replace(k, v)
 				}
@@ -451,7 +451,7 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 			}
 		}
 
-		if entry.Spec.Force {
+		if boolptr.IsSetToTrue(entry.Spec.Force) {
 			for _, attr := range current.Attributes {
 
 				// Skip the RDN attribute computed from the DN
@@ -471,6 +471,47 @@ func (r *EntryReconciler) updateEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 	}
 
 	return nil
+}
+
+// deleteEntry deletes an existing LDAP entry based on the provided Entry specification.
+func (r *EntryReconciler) deleteEntry(cli ldap.Client, entry *klapv1alpha1.Entry, server *klapv1alpha1.Server, log logr.Logger) error {
+
+	if entry.Status.GUID == nil {
+		log.Info("Entry has no GUID, skipping deletion", "dn", entry.Spec.DN)
+		return nil
+	}
+
+	var (
+		delete = ldap.NewDelRequest(*entry.Spec.DN, []ldap.Control{})
+		search = ldap.NewSearchRequest(
+			*server.Spec.BaseDN,
+			ldap.ScopeWholeSubtree,
+			ldap.NeverDerefAliases,
+			0, 0, false,
+			fmt.Sprintf("(%s=%s)", OpenLDAPGUID, ldap.EscapeFilter(*entry.Status.GUID)),
+			[]string{"*"},
+			nil,
+		)
+	)
+
+	if *server.Spec.Implementation == ActiveDirectory {
+		search.Filter = fmt.Sprintf("(%s=%s)", ActiveDirectoryGUID, ldap.EscapeFilter(*entry.Status.GUID))
+	}
+
+	if searchResult, err := cli.Search(search); err != nil {
+		return err
+	} else {
+		if len(searchResult.Entries) == 1 {
+			if searchResult.Entries[0].DN == *entry.Spec.DN {
+				return cli.Del(delete)
+			} else {
+				return fmt.Errorf("entry %s has a different DN than expected: %s", *entry.Status.GUID, searchResult.Entries[0].DN)
+			}
+		} else {
+			log.Info("Entry not found, skipping deletion", "guid", *entry.Status.GUID)
+			return nil
+		}
+	}
 }
 
 // setStatusAvailable updates the Entry status to Available.
