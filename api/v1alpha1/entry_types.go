@@ -38,6 +38,11 @@ type EntrySpec struct {
 	// +require
 	Force *bool `json:"force"`
 
+	// Adopt indicates if pre-existing entry should be adopted or not
+	// +default:value=true
+	// +require
+	Adopt *bool `json:"adopt"`
+
 	// Attributes associated to the entry depends its classes
 	// +required
 	Attributes map[string][]string `json:"attributes,omitzero"`

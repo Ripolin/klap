@@ -364,7 +364,7 @@ func (r *EntryReconciler) addEntry(cli ldap.Client, entry *klapv1alpha1.Entry, s
 	}
 
 	if err := cli.Add(add); err != nil {
-		if !ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) {
+		if !ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) || boolptr.IsSetToFalse(entry.Spec.Adopt) {
 			return err
 		}
 	}

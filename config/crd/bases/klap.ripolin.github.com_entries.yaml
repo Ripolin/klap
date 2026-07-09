@@ -52,6 +52,11 @@ spec:
           spec:
             description: spec defines the desired state of Entry
             properties:
+              adopt:
+                default: true
+                description: Adopt indicates if pre-existing entry should be adopted
+                  or not
+                type: boolean
               attributes:
                 additionalProperties:
                   items:
@@ -86,6 +91,7 @@ spec:
                 - namespace
                 type: object
             required:
+            - adopt
             - attributes
             - dn
             - force

@@ -86,6 +86,11 @@ func (in *EntrySpec) DeepCopyInto(out *EntrySpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.Adopt != nil {
+		in, out := &in.Adopt, &out.Adopt
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Attributes != nil {
 		in, out := &in.Attributes, &out.Attributes
 		*out = make(map[string][]string, len(*in))

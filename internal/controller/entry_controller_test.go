@@ -34,6 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+const objectClass = "objectClass"
+
 var _ = Describe("Entry Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-entry"
@@ -128,7 +130,7 @@ var _ = Describe("Entry Controller", func() {
 						Prune: boolptr.True(),
 						Force: boolptr.False(),
 						Attributes: map[string][]string{
-							"objectClass": {"groupOfNames"},
+							objectClass:   {"groupOfNames"},
 							"description": {"test"},
 						},
 						ServerRef: klapv1alpha1.ResourceRef{
@@ -214,7 +216,7 @@ var _ = Describe("Entry Controller", func() {
 						DN: dn,
 						Attributes: []*ldap.EntryAttribute{
 							{
-								Name:   "objectClass",
+								Name:   objectClass,
 								Values: []string{"groupOfNames"},
 							},
 							{
@@ -394,6 +396,101 @@ var _ = Describe("Entry Controller", func() {
 			allowed, err := reconciler.isNamespaceAllowed(ctx, entry, server)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(allowed).To(BeFalse())
+		})
+	})
+
+	Context("When adding an entry that already exists", func() {
+		const (
+			existingDN   = "cn=existing,dc=example,dc=org"
+			existingUUID = "3a5e9b2c-0000-4a1b-8c2d-1122334455ff"
+		)
+
+		var (
+			mockClient *mock_ldap.MockClient
+			reconciler *EntryReconciler
+			server     *klapv1alpha1.Server
+		)
+
+		// alreadyExists mimics the error an LDAP server returns when the DN being
+		// added is already present in the directory.
+		alreadyExists := ldap.NewError(ldap.LDAPResultEntryAlreadyExists, fmt.Errorf("entry already exists"))
+
+		// newEntry builds an Entry targeting the pre-existing DN with the given
+		// adopt policy.
+		newEntry := func(adopt *bool) *klapv1alpha1.Entry {
+			dn := existingDN
+			return &klapv1alpha1.Entry{
+				Spec: klapv1alpha1.EntrySpec{
+					DN:    &dn,
+					Adopt: adopt,
+					Attributes: map[string][]string{
+						objectClass: {"organizationalUnit"},
+					},
+				},
+			}
+		}
+
+		// expectAdoption sets up the Search that resolves the GUID of the
+		// pre-existing entry once its addition has been skipped.
+		expectAdoption := func() {
+			mockClient.EXPECT().Search(gomock.Cond(func(search *ldap.SearchRequest) bool {
+				return search.Filter == fmt.Sprintf("(%s=%s)", OpenLDAPDN, existingDN)
+			})).Return(&ldap.SearchResult{
+				Entries: []*ldap.Entry{
+					{
+						DN: existingDN,
+						Attributes: []*ldap.EntryAttribute{
+							{Name: OpenLDAPGUID, Values: []string{existingUUID}},
+						},
+					},
+				},
+			}, nil)
+		}
+
+		BeforeEach(func() {
+			mockCtrl := gomock.NewController(GinkgoT())
+			mockClient = mock_ldap.NewMockClient(mockCtrl)
+			reconciler = &EntryReconciler{}
+
+			baseDN := "dc=example,dc=org"
+			impl := OpenLDAP
+			server = &klapv1alpha1.Server{
+				Spec: klapv1alpha1.ServerSpec{
+					BaseDN:         &baseDN,
+					Implementation: &impl,
+				},
+			}
+		})
+
+		It("adopts the existing entry when adopt is true", func() {
+			mockClient.EXPECT().Add(gomock.Any()).Return(alreadyExists)
+			expectAdoption()
+
+			entry := newEntry(boolptr.True())
+			Expect(reconciler.addEntry(mockClient, entry, server)).To(Succeed())
+			Expect(entry.Status.GUID).NotTo(BeNil())
+			Expect(*entry.Status.GUID).To(Equal(existingUUID))
+		})
+
+		It("adopts the existing entry when adopt is unset", func() {
+			mockClient.EXPECT().Add(gomock.Any()).Return(alreadyExists)
+			expectAdoption()
+
+			entry := newEntry(nil)
+			Expect(reconciler.addEntry(mockClient, entry, server)).To(Succeed())
+			Expect(entry.Status.GUID).NotTo(BeNil())
+			Expect(*entry.Status.GUID).To(Equal(existingUUID))
+		})
+
+		It("does not adopt and surfaces the error when adopt is false", func() {
+			// No Search is expected: addition must fail before any adoption.
+			mockClient.EXPECT().Add(gomock.Any()).Return(alreadyExists)
+
+			entry := newEntry(boolptr.False())
+			err := reconciler.addEntry(mockClient, entry, server)
+			Expect(err).To(HaveOccurred())
+			Expect(ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists)).To(BeTrue())
+			Expect(entry.Status.GUID).To(BeNil())
 		})
 	})
 })

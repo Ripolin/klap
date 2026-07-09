@@ -86,6 +86,7 @@ spec:
   dn: cn=joe,dc=example,dc=org
   prune: true       # delete LDAP entry when this resource is deleted
   force: false      # allow destructive attribute changes
+  adopt: true       # take over a pre-existing LDAP entry with the same DN
   attributes:
     objectClass:
       - inetOrgPerson
@@ -147,6 +148,28 @@ spec:
 > namespace are allowed. When it is set, an Entry from a different namespace that
 > matches none of the criteria is rejected and its status reports the error.
 
+#### The bind account
+
+Every `Entry` reconciled against a `Server` acts through the single account
+defined by `spec.bindDN` / `spec.passwordSecretRef`. That account's directory
+privileges therefore define the **blast radius** of klap: any DN it is allowed
+to create, modify or delete is reachable by *any* Entry permitted to use the
+Server (see [namespace filtering](#restricting-which-namespaces-may-use-a-server)
+and [adoption](#adopting-pre-existing-entries)).
+
+Follow least privilege on the directory side:
+
+- Grant the bind account write access only to the sub-tree(s) klap is meant to
+  manage (e.g. `ou=managed,dc=example,dc=org`), not to the whole directory.
+- Keep it out of administrative groups; it rarely needs to modify schema,
+  ACLs or other accounts' credentials.
+- Use a dedicated service account per `Server` so its rights can be scoped and
+  audited independently.
+
+> ⚠️ Namespace filtering and `adopt: false` restrict what klap *resources* can
+> ask for, but the directory ACLs on the bind account are the real enforcement
+> boundary. Do not rely on klap-side controls alone.
+
 ### Entry
 
 | Field             | Type                | Default | Description                                    |
@@ -154,8 +177,26 @@ spec:
 | `spec.dn`         | string              | —       | Distinguished name (validated by webhook)      |
 | `spec.prune`      | bool                | `true`  | Delete the LDAP entry when resource is deleted |
 | `spec.force`      | bool                | `false` | Allow destructive attribute modifications      |
+| `spec.adopt`      | bool                | `true`  | Take over a pre-existing entry with the same DN|
 | `spec.attributes` | map[string][]string | —       | LDAP attributes to reconcile                   |
 | `spec.serverRef`  | ResourceRef         | —       | Reference to a `Server` resource               |
+
+#### Adopting pre-existing entries
+
+When an `Entry` targets a DN that already exists in the directory, `spec.adopt`
+controls what happens:
+
+- `adopt: true` (default) — klap takes ownership of the existing entry, records
+  its remote UUID/GUID in `status.guid`, and reconciles its attributes from then
+  on. On deletion, klap only removes the entry if that same GUID still resolves
+  to the expected DN.
+- `adopt: false` — reconciliation fails with an *entry already exists* error and
+  the object is left untouched. Use this to guarantee an `Entry` never manages a
+  DN it did not create.
+
+> ⚠️ Adoption grants an `Entry` control over a directory object klap did not
+> create — including the ability to modify it (and, once adopted, to prune it).
+> Set `adopt: false` when Entries must be restricted to their own objects.
 
 #### Secret key override
 
