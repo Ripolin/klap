@@ -12,13 +12,16 @@
 
 Two CRDs are provided:
 
-| CRD      | Purpose                                            |
-|----------|----------------------------------------------------|
-| `Server` | Centralizes LDAP connection and TLS configuration  |
-| `Entry`  | Declares a single LDAP directory entry to manage   |
+| CRD      | Purpose                                           |
+| -------- | ------------------------------------------------- |
+| `Server` | Centralizes LDAP connection and TLS configuration |
+| `Entry`  | Declares a single LDAP directory entry to manage  |
 
 **Key features:**
 - Declarative LDAP entry lifecycle (create, update, prune on delete)
+- Namespace-scoped access control per Server (name regex or label selector)
+- Controlled adoption of pre-existing entries (`adopt`)
+- Ownership-verified deletion (GUID/DN match before pruning)
 - TLS and StartTLS support with custom CA bundles
 - DN validation via admission webhooks
 - Supports OpenLDAP and Active Directory *(beta)*
@@ -41,11 +44,38 @@ helm install klap oci://ghcr.io/ripolin/helm/klap --version <version> \
   --create-namespace
 ```
 
-### Via Kustomize
+### Via kubectl
+
+Apply the consolidated manifest from a tagged release (bundles the CRDs, RBAC,
+webhooks and controller):
 
 ```sh
-kubectl apply -k config/default
+kubectl apply -f https://raw.githubusercontent.com/ripolin/klap/<version>/dist/install.yaml
 ```
+
+### Uninstall
+
+```sh
+helm uninstall klap --namespace klap-system                                              # Helm
+kubectl delete -f https://raw.githubusercontent.com/ripolin/klap/<version>/dist/install.yaml  # kubectl
+```
+
+> Deleting the CRDs removes all `Server` and `Entry` resources. Entries with
+> `prune: true` will have their LDAP objects deleted as their finalizers run, so
+> remove or set `prune: false` on any Entry whose directory object must survive
+> before uninstalling.
+
+> ⚠️ `kubectl delete -f install.yaml` tears down the controller **and** the CRDs
+> in one apply, with no ordering guarantee. If the controller Deployment is
+> removed before the Entries, their finalizers can no longer run: the Entries get
+> stuck in `Terminating` and the CRD deletion hangs. Uninstall in order instead —
+> delete (or reconcile) all Entries first, let their finalizers clear, then remove
+> the operator:
+>
+> ```sh
+> kubectl delete entries --all --all-namespaces   # let finalizers run while the controller is still up
+> kubectl delete -f https://raw.githubusercontent.com/ripolin/klap/<version>/dist/install.yaml
+> ```
 
 ## Quick start
 
@@ -101,21 +131,40 @@ spec:
 
 Once applied, `klap` creates or updates the corresponding entry in the LDAP directory. The remote entry UUID is stored in `status.guid`.
 
+### Observing state
+
+Each `Entry` carries an `Available` status condition reflecting the last
+reconcile, surfaced as the `AVAILABLE` column:
+
+```sh
+kubectl get entries
+# NAME   DN                    SERVER        AVAILABLE   AGE
+# joe    cn=joe,dc=example...  ldap-server   True        2m
+```
+
+- `True` — reconciled successfully.
+- `False` — reconcile failed (e.g. DN outside the base tree, bind failure); the
+  condition `message` carries the reason.
+- `Unknown` — an error occurred after the entry had already been created, so its
+  remote state is uncertain.
+
+Use `kubectl describe entry <name>` to read the full condition message.
+
 ## CRD Reference
 
 ### Server
 
-| Field                    | Type              | Default    | Description                                            |
-|--------------------------|-------------------|------------|--------------------------------------------------------|
-| `spec.url`               | string            | —          | LDAP URL (`ldap://` or `ldaps://`)                     |
-| `spec.baseDN`            | string            | —          | Base DN for searches                                   |
-| `spec.bindDN`            | string            | —          | Bind DN for authentication                             |
-| `spec.passwordSecretRef` | ResourceRef       | —          | Secret containing the `password` key                   |
-| `spec.implementation`    | enum              | `openldap` | `openldap` or `activedirectory` *(beta)*               |
-| `spec.tlsSecretRef`      | ResourceRef       | —          | Secret with `ca.crt` for custom CA trust               |
-| `spec.startTLS`          | bool              | `false`    | Enable StartTLS on plain `ldap://` connections         |
-| `spec.allowedNamespaces` | NamespaceSelector | —          | Restrict which namespaces' Entries may use this Server |
-| `spec.timeout`           | Duration          | `30s`      | Maximum duration for any operation against the server  |
+| Field                    | Type              | Default    | Description                                               |
+| ------------------------ | ----------------- | ---------- | --------------------------------------------------------- |
+| `spec.url`               | string            | —          | LDAP URL (`ldap://` or `ldaps://`)                        |
+| `spec.baseDN`            | string            | —          | Base DN for searches                                      |
+| `spec.bindDN`            | string            | —          | Bind DN for authentication                                |
+| `spec.passwordSecretRef` | SecretRef         | —          | Secret containing the `password` key                      |
+| `spec.implementation`    | enum              | `openldap` | `openldap` or `activedirectory` *(beta)*                  |
+| `spec.tlsSecretRef`      | SecretRef         | —          | Secret with `ca.crt` for custom CA trust                  |
+| `spec.startTLS`          | bool              | `false`    | StartTLS on plain `ldap://` (admission warns if left off) |
+| `spec.allowedNamespaces` | NamespaceSelector | —          | Restrict which namespaces' Entries may use this Server    |
+| `spec.timeout`           | Duration          | `30s`      | Maximum duration for any operation against the server     |
 
 #### Restricting which namespaces may use a Server
 
@@ -148,6 +197,11 @@ spec:
 > namespace are allowed. When it is set, an Entry from a different namespace that
 > matches none of the criteria is rejected and its status reports the error.
 
+> ⚠️ `labelSelector` trusts **namespace labels**. Anyone able to label their own
+> namespace could match the selector, so namespace labels used here must be
+> controlled by cluster administrators. `namePattern` is harder to self-assign
+> since namespace creation is usually more restricted.
+
 #### The bind account
 
 Every `Entry` reconciled against a `Server` acts through the single account
@@ -155,7 +209,7 @@ defined by `spec.bindDN` / `spec.passwordSecretRef`. That account's directory
 privileges therefore define the **blast radius** of klap: any DN it is allowed
 to create, modify or delete is reachable by *any* Entry permitted to use the
 Server (see [namespace filtering](#restricting-which-namespaces-may-use-a-server)
-and [adoption](#adopting-pre-existing-entries)).
+and [adoption](#adopting-pre-existing-entries-adopt)).
 
 Follow least privilege on the directory side:
 
@@ -172,16 +226,49 @@ Follow least privilege on the directory side:
 
 ### Entry
 
-| Field             | Type                | Default | Description                                    |
-|-------------------|---------------------|---------|------------------------------------------------|
-| `spec.dn`         | string              | —       | Distinguished name (validated by webhook)      |
-| `spec.prune`      | bool                | `true`  | Delete the LDAP entry when resource is deleted |
-| `spec.force`      | bool                | `false` | Allow destructive attribute modifications      |
-| `spec.adopt`      | bool                | `true`  | Take over a pre-existing entry with the same DN|
-| `spec.attributes` | map[string][]string | —       | LDAP attributes to reconcile                   |
-| `spec.serverRef`  | ResourceRef         | —       | Reference to a `Server` resource               |
+| Field             | Type                | Default | Description                                                              |
+| ----------------- | ------------------- | ------- | ------------------------------------------------------------------------ |
+| `spec.dn`         | string              | —       | Distinguished name; must be a descendant of the Server `baseDN`          |
+| `spec.prune`      | bool                | `true`  | On resource deletion, delete the LDAP entry (`false` leaves it in place) |
+| `spec.force`      | bool                | `false` | Make the spec authoritative over the live LDAP state (see below)         |
+| `spec.adopt`      | bool                | `true`  | Take over a pre-existing entry with the same DN (see below)              |
+| `spec.attributes` | map[string][]string | —       | LDAP attributes to reconcile                                             |
+| `spec.serverRef`  | ResourceRef         | —       | Reference to a `Server` (`namespace` defaults to the Entry's namespace)  |
 
-#### Adopting pre-existing entries
+#### DN must live under the Server baseDN
+
+An `Entry`'s `spec.dn` must be a **descendant of the referenced Server's
+`spec.baseDN`**. This is enforced at reconcile time: an Entry whose DN falls
+outside the base tree is marked `Available: False` with a message such as
+`cn=joe,dc=other,dc=org is not a descendant of dc=example,dc=org`, and no LDAP
+operation is attempted.
+
+For example, with a Server `baseDN: dc=example,dc=org`:
+
+| Entry `dn`                            | Result      |
+| ------------------------------------- | ----------- |
+| `cn=joe,dc=example,dc=org`            | ✅ accepted |
+| `cn=joe,ou=people,dc=example,dc=org`  | ✅ accepted |
+| `cn=joe,dc=other,dc=org`              | ❌ rejected |
+| `dc=example,dc=org` (the base itself) | ❌ rejected |
+
+#### Attribute reconciliation (`force`)
+
+`spec.force` decides whether the Entry's `attributes` are merged into the live
+LDAP object or made authoritative over it:
+
+- `force: false` (default) — **additive**. klap only ensures the declared
+  attributes and values are present: missing attributes are added, missing values
+  are appended. Extra values, and attributes not listed in the spec, are **left
+  untouched** — klap never removes anything. Use this when other tools or admins
+  may legitimately add data that klap should preserve.
+- `force: true` — **authoritative**. The spec becomes the source of truth:
+  attributes whose values differ are replaced with the spec's values, and any
+  attribute present on the object but absent from the spec is removed (except the
+  RDN attribute derived from the DN). The LDAP object is made to match the spec
+  exactly. Use this when the Entry must fully own the object's attributes.
+
+#### Adopting pre-existing entries (`adopt`)
 
 When an `Entry` targets a DN that already exists in the directory, `spec.adopt`
 controls what happens:
@@ -200,7 +287,10 @@ controls what happens:
 
 #### Secret key override
 
-By default `passwordSecretRef` reads the `password` key and `tlsSecretRef` reads `ca.crt`. Both can be overridden:
+A `SecretRef` has a `name` and an optional `key`; the referenced Secret is always
+read from the **Server's own namespace** (unlike `serverRef`, a `ResourceRef`
+that carries an explicit `namespace`). By default `passwordSecretRef` reads the
+`password` key and `tlsSecretRef` reads `ca.crt`. Both keys can be overridden:
 
 ```yaml
 spec:
