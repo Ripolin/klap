@@ -129,6 +129,10 @@ func (r *EntryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
 	}
 
+	if err = r.checkEntryDN(entry, server); err != nil {
+		return ctrl.Result{}, r.setStatusUnavailable(ctx, entry, err)
+	}
+
 	if server.Spec.TlsSecretRef.Name != nil {
 		cacert, err := r.getCACert(ctx, server)
 		if err != nil {
@@ -512,6 +516,25 @@ func (r *EntryReconciler) deleteEntry(cli ldap.Client, entry *klapv1alpha1.Entry
 			return nil
 		}
 	}
+}
+
+// checkEntryDN checks if the Entry's DN is a descendant of the Server's BaseDN.
+func (r *EntryReconciler) checkEntryDN(entry *klapv1alpha1.Entry, server *klapv1alpha1.Server) error {
+	baseDN, err := ldap.ParseDN(*server.Spec.BaseDN)
+	if err != nil {
+		return err
+	}
+
+	entryDN, err := ldap.ParseDN(*entry.Spec.DN)
+	if err != nil {
+		return err
+	}
+
+	if !baseDN.AncestorOf(entryDN) {
+		return fmt.Errorf("%s is not a descendant of %s", *entry.Spec.DN, *server.Spec.BaseDN)
+	}
+
+	return nil
 }
 
 // setStatusAvailable updates the Entry status to Available.

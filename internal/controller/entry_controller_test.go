@@ -29,12 +29,16 @@ import (
 	gomock "go.uber.org/mock/gomock"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const objectClass = "objectClass"
+const (
+	objectClass  = "objectClass"
+	groupOfNames = "groupOfNames"
+)
 
 var _ = Describe("Entry Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -44,7 +48,7 @@ var _ = Describe("Entry Controller", func() {
 		const uuid = "fab03ddc-1989-471d-84f3-4c19d32fda35"
 
 		var ns = "default"
-		var dn = "cn=foobar"
+		var dn = "cn=foo,dc=bar"
 
 		var mockClient *mock_ldap.MockClient
 
@@ -92,8 +96,8 @@ var _ = Describe("Entry Controller", func() {
 			By("creating the custom resource for the Kind Server")
 			err = k8sClient.Get(ctx, serverTypeNamespacedName, server)
 			if err != nil && errors.IsNotFound(err) {
-				baseDN := "foo"
-				bindDN := "bar"
+				baseDN := "dc=bar"
+				bindDN := "cn=admin,dc=bar"
 				ldapUrl := "http://my-ldap-server"
 				passwordName := passwdName
 				key := "password"
@@ -130,7 +134,7 @@ var _ = Describe("Entry Controller", func() {
 						Prune: boolptr.True(),
 						Force: boolptr.False(),
 						Attributes: map[string][]string{
-							objectClass:   {"groupOfNames"},
+							objectClass:   {groupOfNames},
 							"description": {"test"},
 						},
 						ServerRef: klapv1alpha1.ResourceRef{
@@ -217,7 +221,7 @@ var _ = Describe("Entry Controller", func() {
 						Attributes: []*ldap.EntryAttribute{
 							{
 								Name:   objectClass,
-								Values: []string{"groupOfNames"},
+								Values: []string{groupOfNames},
 							},
 							{
 								Name:   "description",
@@ -253,6 +257,55 @@ var _ = Describe("Entry Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should fail when the entry DN is outside the server BaseDN", func() {
+			By("Creating an entry whose DN does not match the server BaseDN")
+			// The shared Server uses baseDN "foo"; this DN does not contain it.
+			badDN := "cn=outside,dc=elsewhere,dc=org"
+			badName := types.NamespacedName{Name: "bad-dn-entry", Namespace: ns}
+			sName := serverName
+			Expect(k8sClient.Create(ctx, &klapv1alpha1.Entry{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      badName.Name,
+					Namespace: badName.Namespace,
+				},
+				Spec: klapv1alpha1.EntrySpec{
+					DN:         &badDN,
+					Prune:      boolptr.False(),
+					Force:      boolptr.False(),
+					Attributes: map[string][]string{objectClass: {groupOfNames}},
+					ServerRef: klapv1alpha1.ResourceRef{
+						Name:      &sName,
+						Namespace: &ns,
+					},
+				},
+			})).To(Succeed())
+
+			controllerReconciler := &EntryReconciler{
+				ldapClient: mockClient,
+				Client:     k8sClient,
+				Scheme:     k8sClient.Scheme(),
+				Recorder:   recorder,
+			}
+
+			By("Reconciling the mismatching entry")
+			// The BaseDN check runs before any LDAP dial/bind, so the mock must
+			// observe no Bind/Add/Search call; gomock would fail on an unexpected one.
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: badName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Checking the entry is marked Unavailable with a BaseDN error")
+			result := &klapv1alpha1.Entry{}
+			Expect(k8sClient.Get(ctx, badName, result)).To(Succeed())
+			cond := meta.FindStatusCondition(result.Status.Conditions, typeAvailable)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Message).To(ContainSubstring("is not a descendant of"))
+
+			Expect(k8sClient.Delete(ctx, result)).To(Succeed())
 		})
 	})
 

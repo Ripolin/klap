@@ -102,6 +102,7 @@ type SecretRef struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:printcolumn:name="URL",type=string,JSONPath=`.spec.url`
+// +kubebuilder:printcolumn:name="BASE_DN",type=string,JSONPath=`.spec.baseDN`
 // +kubebuilder:printcolumn:name="IMPLEMENTATION",type=string,JSONPath=`.spec.implementation`
 // +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=`.metadata.creationTimestamp`
 
